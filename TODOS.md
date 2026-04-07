@@ -15,4 +15,11 @@ The cover is the key that names the scenes, video analysis provides the timestam
 ### DVD cover UX refinement
 Covers are valuable for the grandparent experience (recognizable cover art). V1 includes covers in the manifest and serves them via nginx, but the exact UX (detail panel, card overlay, player sidebar) should be refined once the basic app is working and can be tested with real users.
 
-**Context:** User explicitly said covers are "very valuable for grandma to see as part of the experience." Want both video frame thumbnails AND covers visible. UX TBD.
+**Context:** User explicitly said covers are "very valuable for grandma to see as part of the experience." Want both video frame thumbnails AND covers visible. UX TBD. **Update from CEO review:** DVD grouping with cover art headers is now in V1 scope. This TODO is about further refinement beyond the group header layout.
+
+### Play-all sequential mode
+Button to play all videos from the selected year in sequence, auto-advancing when each video finishes. Lean-back viewing: grandma hits play and watches without clicking each video.
+
+**Context:** Surfaced in CEO review, user chose to defer to post-V1. Natural fast-follow once the player overlay is solid. Effort: S. Edge cases to handle: video 404 mid-playlist (skip to next), resume on page reload (hash-based position tracking).
+**Priority:** P2
+**Depends on:** V1 player overlay working correctly.

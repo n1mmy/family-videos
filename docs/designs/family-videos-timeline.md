@@ -71,5 +71,5 @@ The actual date range of the collection is determined by the manifest data at ru
 - Play-all sequential mode (user preference: single-video playback for V1)
 
 ## Cross-Document Notes
-- `docs/design.md` manifest schema (lines 113-134) includes `sprite`, `spriteColumns`, and `spriteInterval` fields that were deferred to V2 in the eng review. The implementation plan's schema (`docs/plan.md`) is the source of truth.
-- `docs/design.md` references a cookie-based passphrase gate. This was superseded by `auth_basic` per eng review decision #1.
+- `docs/product-spec.md` manifest schema (lines 113-134) includes `sprite`, `spriteColumns`, and `spriteInterval` fields that were deferred to V2 in the eng review. The implementation plan's schema (`docs/plan.md`) is the source of truth.
+- `docs/product-spec.md` references a cookie-based passphrase gate. This was superseded by `auth_basic` per eng review decision #1.

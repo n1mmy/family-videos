@@ -1,0 +1,21 @@
+# Replace with your domain and TLS secret name.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: family-videos
+spec:
+  rules:
+    - host: videos.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: family-videos
+                port:
+                  number: 80
+  tls:
+    - hosts:
+        - videos.example.com
+      secretName: family-videos-tls

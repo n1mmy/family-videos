@@ -1,0 +1,11 @@
+# Replace with your container registry.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: family-videos
+spec:
+  template:
+    spec:
+      containers:
+        - name: nginx
+          image: ghcr.io/youruser/family-videos:v1.0.0

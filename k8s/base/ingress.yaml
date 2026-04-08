@@ -7,7 +7,7 @@ metadata:
 spec:
   ingressClassName: nginx
   rules:
-    - host: ""  # REPLACE: your domain (e.g. videos.example.com)
+    - host: videos.example.com
       http:
         paths:
           - path: /
@@ -19,4 +19,4 @@ spec:
                   number: 80
   tls:
     - hosts:
-        - ""  # REPLACE: same domain as above
+        - videos.example.com

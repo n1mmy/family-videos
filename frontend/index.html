@@ -21,10 +21,12 @@
             <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><polyline points="15,6 9,12 15,18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </button>
           <div class="timeline-scrubber">
-            <div class="scrubber-track">
-              <div class="scrubber-handle" role="slider" aria-label="Year selector" tabindex="0"></div>
+            <div class="timeline-rail">
+              <div class="scrubber-track">
+                <div class="scrubber-handle" role="slider" aria-label="Year selector" tabindex="0"></div>
+              </div>
+              <div class="timeline-labels"></div>
             </div>
-            <div class="timeline-labels"></div>
           </div>
           <button class="timeline-chevron timeline-chevron-right" type="button" aria-label="Next year">
             <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><polyline points="9,6 15,12 9,18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -82,6 +84,11 @@
         <button id="player-error-close" type="button">Close</button>
       </div>
     </div>
+  </div>
+
+  <div id="cover-overlay" class="cover-overlay" role="dialog" aria-modal="true" aria-label="DVD cover viewer">
+    <button class="cover-close" id="cover-close-btn" type="button" aria-label="Close cover viewer">&times;</button>
+    <img id="cover-image" class="cover-image" alt="">
   </div>
 
   <script src="app.js"></script>

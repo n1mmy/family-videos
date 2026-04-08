@@ -207,7 +207,7 @@ Vanilla JS, no build step. Single flat `app.js` with comment sections (`// === T
 8. **URL deep-linking**: read `window.location.hash` on load. If exactly 4 digits → set timeline to that year. Otherwise → look up as video ID, auto-open player. **Invalid hash fallback**: if hash doesn't match a year or video ID, ignore it and show the first year in the collection (earliest dateStart). Update hash on year change. Listen to `hashchange` event for back button sync.
 9. **Keyboard navigation**: Left/Right arrows move timeline to prev/next year (only when player closed). Enter/Space on focused card opens player. Escape closes player.
 10. **Error handling**: video 404 → message in overlay. manifest fail → error page with retry.
-11. **Dark mode**: automatic via `prefers-color-scheme: dark` media query. No manual toggle (zero chrome). All colors defined as CSS custom properties (`:root` for light, `@media (prefers-color-scheme: dark)` override for dark). Variable names: `--bg`, `--surface`, `--text`, `--text-muted`, `--accent`, `--accent-hover`, `--border`, `--overlay`, `--shadow-card`, `--shadow-elevated`. Values from DESIGN.md light/dark mode sections.
+11. **Dark mode**: automatic via `prefers-color-scheme: dark` media query. No manual toggle (zero chrome). All colors defined as CSS custom properties (`:root` for light, `@media (prefers-color-scheme: dark)` override for dark). Variable names: `--bg`, `--surface`, `--text`, `--text-muted`, `--accent`, `--accent-hover`, `--border`, `--overlay`, `--shadow-card`, `--shadow-elevated`. Values from DESIGN.md light/dark mode sections. **Note:** `--text-muted` uses the WCAG-safe value `#6B5E54` (light) / `#A89B8F` (dark) at all sizes, not the warmer #8B7E74. Single value, always accessible.
 12. **Focus indicators**: all focusable elements (video cards, year labels, close button) get a visible focus ring: `2px solid var(--accent)` with `2px offset`, `100ms ease-out` transition. Only visible on `:focus-visible` (keyboard nav), not on click/tap.
 13. **Responsive layout**:
    - **Desktop (≥1024px)**: multi-column video grid (`repeat(auto-fill, minmax(220px, 1fr))`), full timeline scrubber + year labels + density bars. Max content width 1120px, centered.
@@ -372,11 +372,12 @@ Lanes A and B share the manifest.json schema as a contract. B can build against 
 |--------|---------|-----|------|--------|----------|
 | CEO Review | `/plan-ceo-review` | Scope & strategy | 1 | CLEAR | 6 proposals, 5 accepted, 0 deferred. Mode: SELECTIVE EXPANSION |
 | Codex Review | `/codex review` | Independent 2nd opinion | 0 | — | — |
-| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 1 | CLEAR (PLAN) | 9 issues, 0 critical gaps |
+| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 2 | CLEAR (PLAN) | Run 1: 9 issues, 0 critical gaps. Run 2 (post-design review): 4 issues, 0 critical gaps |
 | Design Review | `/plan-design-review` | UI/UX gaps | 1 | CLEAR (FULL) | score: 5/10 → 9/10, 8 decisions |
 | DX Review | `/plan-devex-review` | Developer experience gaps | 0 | — | — |
 | Outside Voice | Codex via CEO + eng + design review | Independent plan challenge | 3 | issues_found | 14 (CEO), 16 (eng), 6 (design). 19 incorporated total |
 
 - **CROSS-MODEL:** Design review outside voices: Codex flagged card-based layout + missing brand/headlines/CSS vars. Claude subagent found contrast failure + missing states + tap targets. Both agreed on no-brand-in-first-screen. All findings addressed.
+- **ENG RE-RUN:** Unified `--text-muted` to #6B5E54 (WCAG-safe single value). Fixed stale click-outside reference in product-spec. Updated test plan to 53 frontend paths. Updated WCAG TODO with partial resolution.
 - **UNRESOLVED:** 0
-- **VERDICT:** CEO + ENG + DESIGN CLEARED. Eng review may be stale (design review added responsive specs, accessibility, dark mode, CSS variables). Recommend re-running `/plan-eng-review` before implementation.
+- **VERDICT:** CEO + ENG + DESIGN CLEARED — ready to implement. Run `/ship` when done.

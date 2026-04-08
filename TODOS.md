@@ -20,7 +20,7 @@ Covers are valuable for the grandparent experience (recognizable cover art). V1 
 ### Full WCAG contrast audit (light + dark mode)
 Run a systematic contrast check across all text/background combinations in both light and dark mode. The design review identified that muted text (#8B7E74) fails AA at 12-14px and added a darker alternative (#6B5E54) for small text. A full audit should verify all combinations meet WCAG AA, especially dark mode where the charcoal background + muted text ratio hasn't been tested.
 
-**Context:** Design review Pass 6 found the issue. Inline fix applied for the most visible case (small metadata text), but other combinations (semantic colors on both backgrounds, accent text on surfaces) haven't been verified.
+**Context:** Design review Pass 6 found the issue. Eng review (re-run) unified `--text-muted` to #6B5E54 everywhere (passes AA at all sizes). **Remaining:** verify dark mode muted text (#A89B8F on #2D2824), semantic colors (success/warning/error/info) on both light and dark backgrounds, accent text on surfaces.
 **Priority:** P3
 **Depends on:** V1 frontend implementation (need actual rendered UI to test against).
 

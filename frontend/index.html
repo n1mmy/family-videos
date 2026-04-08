@@ -3,6 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#FAF7F2" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#2D2824" media="(prefers-color-scheme: dark)">
   <title>Family Videos</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -15,7 +17,7 @@
       <h1 class="app-title">Family Videos</h1>
       <p class="app-subtitle">Drag to a year to browse</p>
       <nav class="timeline content-hidden" role="navigation" aria-label="Year timeline">
-        <div class="timeline-year-display" aria-live="polite"></div>
+        <div class="timeline-year-display" aria-hidden="true"></div>
         <div class="timeline-scrubber">
           <div class="scrubber-track">
             <div class="scrubber-handle" role="slider" aria-label="Year selector" tabindex="0"></div>
@@ -53,7 +55,7 @@
     </main>
   </div>
 
-  <div id="player-overlay" class="player-overlay" role="region" aria-label="Video player">
+  <div id="player-overlay" class="player-overlay" role="dialog" aria-modal="true" aria-label="Video player">
     <div class="player-container">
       <button class="player-close" id="player-close-btn" type="button" aria-label="Close video player">&times;</button>
       <video id="player-video" controls playsinline></video>

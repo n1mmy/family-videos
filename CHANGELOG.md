@@ -2,6 +2,40 @@
 
 All notable changes to Family Videos will be documented in this file.
 
+## [0.2.0.0] - 2026-04-08
+
+### Added
+- **Anchored Spine landing layout.** The catalog page is now a full editorial flow instead of a one-year-at-a-time grid. A massive Instrument Serif year number anchors the left rail (clamping from 140px on tablet to 220px on desktop), the top bar holds the timeline scrubber + chevrons + title, and the right column streams every year section as a continuous chronological feed. Solves the long-standing sparse-year problem: empty years used to render as blank pages with "No videos from 1989" — now they're omitted from the flow entirely so the catalog reads as one continuous family album. (Approved direction from `/design-shotgun` 2026-04-08, see `docs/plan.md`.)
+- **Top + spine chevron navigation.** Two pairs of `‹ ›` chevrons (top bar left/right and spine up/down on desktop) step the current year through the set of years that actually have content, skipping empty runs. Built explicitly as tap targets for the primary user (grandparents prefer obvious targets over invisible drag affordances). On mobile the spine chevrons collapse out and the top-bar pair becomes the sole stepper to avoid duplicate targets.
+- **Discontinuity markers in the timeline.** Runs of consecutive empty years (e.g., 1980–1982) collapse on the top scrubber into a `···` dot marker with a tooltip showing the skipped range. The scrubber now snaps directly between content years on drag instead of crawling through dead zones, and clicking a "···" snaps to the nearest year with content. Solves a UX bug found during dogfooding: the previous timeline made you drag through years that did nothing.
+- **Clickable DVD cover lightbox.** The tiny 60px DVD cover thumbnails next to each group are unreadable for what they actually contain — many are handwritten VHS labels with notes like "Christmas 81+82, Disney 82, Jen 2nd Bd Party". Click the cover and a lightbox opens showing the full image (up to 1200×85vh, preserving aspect ratio). Closes via dedicated `×` button, Escape key, or backdrop click. Background goes inert while open, focus restores to the originating cover button on close (with `preventScroll: true` so the page doesn't yank the cover back into view), and a Tab focus trap is in place as a fallback for browsers without `inert` support. The image src is cleared on close to free the decoded bitmap.
+
+### Changed
+- **Editorial flow renders all year sections at once** instead of swapping a single year's grid on each navigation. Rendering all sections up front is what makes the new layout work as a continuous reading experience and lets scroll-spy track which year you're in. The DVD primary-year grouping ensures each multi-year DVD appears exactly once at its earliest year — no more `Feb 1979 – Jan 1982` showing up four times across 1979, 1980, 1981, 1982.
+- **Scroll-spy via `IntersectionObserver`** now tracks the current year as you scroll, updating the spine year, the active timeline label, the active section highlight, and the URL hash in lockstep. Uses an anchor line ~24px below the sticky top bar (read live from the `--top-bar-height` CSS variable so the line follows the desktop/mobile difference). The observer maintains its own visible-set across callbacks instead of only inspecting the deltas in each entry batch, so a section that stays visible while another scrolls past is correctly preserved.
+- **Programmatic-scroll guard.** Smooth `scrollIntoView` jumps trigger a 2-second guard window that stops the scroll-spy from fighting the in-flight animation; cleared early via the native `scrollend` event when the browser supports it.
+- **Scrubber drag is now zero-layout-read per pointer move.** Label centers + the track rect are snapshotted into a closure cache at `mousedown` and read from the cache on every `onMove`, eliminating the layout thrash where the previous tick's `handle.style.left` write forced a synchronous layout flush on the next read. Active label and section toggling moved to O(1) `state.labelByYear` / `state.sectionByYear` hash lookups instead of iterating every label and section per drag tick. URL hash updates and screen-reader announcements are deferred during drag and flushed once on drag end so the history API and aria-live region don't churn on every pointer move.
+- **DVD covers are now `<button>` wrappers around the `<img>`** so they're keyboard-accessible tap targets with a proper aria-label, focus ring, and hover lift instead of bare images.
+- **Mobile spine** uses `100svh` instead of `100vh` so the year doesn't jump as the iOS dynamic address bar collapses on scroll.
+- **Coupled scrubber track + labels** in a shared `.timeline-rail` so they scroll horizontally as one rigid unit. Previously the labels had their own `overflow-x: auto` and could drift relative to the static track, leaving the handle visually misaligned from the active label by 100+ pixels on long timelines.
+
+### Fixed
+- **DVD primary-year grouping anchors at the earliest video, not per-video.** The previous single-pass implementation keyed groups by `(perVideoYear, dvdId)`, so a DVD with videos in 2004, 2005, and 2006 silently split into three one-video groups in three separate sections. The two-pass implementation finds the earliest `dateStart` per DVD first, then buckets every video under that single anchor year. (Caught by Codex adversarial review.)
+- **Empty manifest no longer renders the literal string "undefined" in 220px serif.** Both `applyHash` and `syncYearDisplay` now guard against null/undefined years, and an empty library shows a proper "No videos in this library yet." card with the spine and top timeline hidden.
+- **`deriveYearRangeFromVideos` clamps to `[1900, currentYear+5]`** so a single bogus `99990101` value can't allocate 8000 years on the client.
+- **Chevron click listeners no longer stack on manifest retry.** A `state.chevronsInitialized` guard mirrors the existing `scrubberInitialized` pattern; without it, every successful retry would double the click handlers and chevron presses would skip multiple years.
+- **Deep-link `setTimeout(openPlayer)` race.** The timer is now tracked in `state.pendingPlayerTimer` and cancelled on every `hashchange`, so a fast back-button can't open a stale video from a prior deep link.
+- **`getYearRange` falls back to a single year when only one date parses.** Previously a video with `dateStart` but no `dateEnd` returned `['undated']` and silently dropped out of its real year's density bar.
+- **Density bar count uses primary-year grouping for the screen reader announcement** instead of the span-model count. A year with 1 primary video but 5 spanning videos used to announce "Showing 6 videos" while visually showing 1.
+- **Cover viewer Tab focus trap** as defense in depth alongside `inert` for older browsers (Safari < 15.5) where `inert` isn't supported.
+
+### Removed
+- `groupByDvd()` helper (its only caller `renderGrid` was deleted in the refactor).
+- `state.numericYears` cache (now narrowed to a one-time read inside `buildTimeline` for the slider ARIA bounds).
+- `state.timelineItems` field (now a local var inside `buildTimeline` since the gap-collapse walk is its only consumer).
+- Orphan `.year-section-empty` CSS rule (no JS producer after the condensing refactor).
+- Dead `if (groups.length === 0) continue;` guard in `renderAllSections` (`state.yearsWithContent` is already filtered to non-empty).
+
 ## [0.1.3.0] - 2026-04-08
 
 ### Added

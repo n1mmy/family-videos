@@ -1,6 +1,7 @@
 // === CONFIG ===
 var DEBOUNCE_MS = 150;
 var MANIFEST_URL = 'manifest.json';
+var MAX_YEAR_SPAN = 100;
 
 // === STATE ===
 var state = {
@@ -11,7 +12,10 @@ var state = {
   maxVideosInYear: 0,
   playerVideoId: null,
   lastFocusedCard: null,
-  isDragging: false
+  isDragging: false,
+  numericYears: [],
+  thumbnailObserver: null,
+  scrubberInitialized: false
 };
 
 // === HELPERS ===
@@ -19,6 +23,7 @@ function $(sel) { return document.querySelector(sel); }
 function $$(sel) { return document.querySelectorAll(sel); }
 
 function formatDuration(seconds) {
+  if (!seconds || !isFinite(seconds) || seconds < 0) return '--:--';
   var s = Math.floor(seconds);
   var h = Math.floor(s / 3600);
   var m = Math.floor((s % 3600) / 60);
@@ -47,6 +52,7 @@ function getYearRange(video) {
   var endYear = getYearFromDate(video.dateEnd);
   if (startYear === null || endYear === null) return ['undated'];
   if (startYear === endYear) return [startYear];
+  if (endYear - startYear > MAX_YEAR_SPAN) return ['undated'];
   var range = [];
   for (var y = startYear; y <= endYear; y++) {
     range.push(y);
@@ -142,6 +148,9 @@ function initApp(data) {
     if (count > state.maxVideosInYear) state.maxVideosInYear = count;
   }
 
+  // Cache numeric years (used by scrubber, keyboard, positioning)
+  state.numericYears = state.years.slice();
+
   // Add undated to year list if needed
   if (hasUndated) {
     state.years.push('undated');
@@ -163,7 +172,7 @@ function buildTimeline() {
 
   // Set slider ARIA
   var handle = $('.scrubber-handle');
-  var numericYears = state.years.filter(function(y) { return y !== 'undated'; });
+  var numericYears = state.numericYears;
   if (numericYears.length > 0) {
     handle.setAttribute('aria-valuemin', numericYears[0]);
     handle.setAttribute('aria-valuemax', numericYears[numericYears.length - 1]);
@@ -220,8 +229,7 @@ function setYear(year) {
     var labelYear = labels[i].getAttribute('data-year');
     var isActive = labelYear === String(year);
     labels[i].classList.toggle('active', isActive);
-    if (isActive) {
-      // Scroll active label into view for mobile
+    if (isActive && !state.isDragging) {
       labels[i].scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
     }
   }
@@ -254,7 +262,7 @@ var debouncedRenderGrid = debounce(function() {
 
 function positionHandle(year) {
   var handle = $('.scrubber-handle');
-  var numericYears = state.years.filter(function(y) { return y !== 'undated'; });
+  var numericYears = state.numericYears;
   if (year === 'undated' || numericYears.length === 0) {
     handle.style.left = '100%';
     return;
@@ -266,13 +274,15 @@ function positionHandle(year) {
 }
 
 function initScrubberDrag() {
+  if (state.scrubberInitialized) return;
+  state.scrubberInitialized = true;
   var handle = $('.scrubber-handle');
   var track = $('.scrubber-track');
 
   function getYearFromPointer(clientX) {
     var rect = track.getBoundingClientRect();
     var ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-    var numericYears = state.years.filter(function(y) { return y !== 'undated'; });
+    var numericYears = state.numericYears;
     var idx = Math.round(ratio * (numericYears.length - 1));
     return numericYears[idx];
   }
@@ -384,19 +394,21 @@ function renderGrid() {
 }
 
 function createCoverElement(coverUrl, dvdId) {
+  if (!coverUrl) return createCoverMonogram(dvdId);
   var img = document.createElement('img');
   img.className = 'dvd-cover';
   img.alt = formatDvdTitle(dvdId) + ' cover';
   img.src = coverUrl;
-  img.onerror = function() {
-    // Replace with monogram
-    var mono = document.createElement('div');
-    mono.className = 'dvd-cover-monogram';
-    mono.textContent = dvdId.charAt(0).toUpperCase();
-    mono.setAttribute('aria-hidden', 'true');
-    img.replaceWith(mono);
-  };
+  img.onerror = function() { img.replaceWith(createCoverMonogram(dvdId)); };
   return img;
+}
+
+function createCoverMonogram(dvdId) {
+  var mono = document.createElement('div');
+  mono.className = 'dvd-cover-monogram';
+  mono.textContent = dvdId.charAt(0).toUpperCase();
+  mono.setAttribute('aria-hidden', 'true');
+  return mono;
 }
 
 function formatDvdTitle(dvdId) {
@@ -491,10 +503,27 @@ function openPlayer(videoId) {
   // Update hash
   history.pushState(null, '', '#' + videoId);
 
-  // Focus close button
+  // Focus close button and trap focus within overlay
   $('#player-close-btn').focus();
+  overlay.addEventListener('keydown', trapFocus);
 
   announce('Playing ' + video.title);
+}
+
+function trapFocus(e) {
+  if (e.key !== 'Tab') return;
+  var overlay = $('#player-overlay');
+  var focusable = overlay.querySelectorAll('button, video, [tabindex]:not([tabindex="-1"])');
+  if (!focusable.length) return;
+  var first = focusable[0];
+  var last = focusable[focusable.length - 1];
+  if (e.shiftKey && document.activeElement === first) {
+    e.preventDefault();
+    last.focus();
+  } else if (!e.shiftKey && document.activeElement === last) {
+    e.preventDefault();
+    first.focus();
+  }
 }
 
 function closePlayer() {
@@ -504,16 +533,18 @@ function closePlayer() {
   var videoEl = $('#player-video');
 
   videoEl.pause();
+  videoEl.onerror = null;
   videoEl.removeAttribute('src');
   videoEl.load();
 
   overlay.classList.remove('visible');
+  overlay.removeEventListener('keydown', trapFocus);
   state.playerVideoId = null;
 
-  // Restore hash to current year
+  // Restore hash to current year (replaceState avoids polluting back button)
   var yearHash = state.currentYear && state.currentYear !== 'undated'
     ? '#' + state.currentYear : '';
-  history.pushState(null, '', yearHash || window.location.pathname);
+  history.replaceState(null, '', yearHash || window.location.pathname);
 
   // Return focus
   if (state.lastFocusedCard && state.lastFocusedCard.isConnected) {
@@ -526,6 +557,10 @@ function closePlayer() {
 
 // === THUMBNAILS ===
 function observeThumbnails() {
+  if (state.thumbnailObserver) {
+    state.thumbnailObserver.disconnect();
+    state.thumbnailObserver = null;
+  }
   var images = $$('.video-card-thumb img[data-src]');
   if (!images.length) return;
 
@@ -544,6 +579,7 @@ function observeThumbnails() {
     for (var i = 0; i < images.length; i++) {
       observer.observe(images[i]);
     }
+    state.thumbnailObserver = observer;
   } else {
     // Eager fallback
     for (var j = 0; j < images.length; j++) {
@@ -633,7 +669,7 @@ document.addEventListener('keydown', function(e) {
   if (state.playerVideoId) return;
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
 
-  var numericYears = state.years.filter(function(y) { return y !== 'undated'; });
+  var numericYears = state.numericYears;
 
   if (e.key === 'ArrowLeft') {
     e.preventDefault();

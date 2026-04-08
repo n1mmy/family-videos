@@ -266,6 +266,10 @@ body {
   cursor: grabbing;
 }
 
+.scrubber-handle:hover {
+  transform: translate(-50%, -50%) scale(1.15);
+}
+
 .scrubber-handle.dragging {
   transition: none;
 }
@@ -497,7 +501,7 @@ body {
 }
 
 .video-card-info {
-  padding: var(--space-sm) var(--space-sm) var(--space-sm);
+  padding: 12px;
 }
 
 .video-card-title {
@@ -609,6 +613,11 @@ body {
   padding: var(--space-sm) var(--space-lg);
   cursor: pointer;
   min-height: 44px;
+  transition: background var(--duration-micro) ease-out;
+}
+
+.player-error button:hover {
+  background: var(--accent-hover);
 }
 
 /* === Screen Reader Only === */
@@ -627,6 +636,7 @@ body {
 /* === Focus & Accessibility === */
 .video-card:focus-visible,
 .timeline-label:focus-visible,
+.scrubber-handle:focus-visible,
 .player-close:focus-visible,
 .error-state button:focus-visible,
 .player-error button:focus-visible {
@@ -636,6 +646,7 @@ body {
 
 .video-card:focus:not(:focus-visible),
 .timeline-label:focus:not(:focus-visible),
+.scrubber-handle:focus:not(:focus-visible),
 .player-close:focus:not(:focus-visible) {
   outline: none;
 }

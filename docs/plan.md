@@ -192,20 +192,33 @@ Python script running as k8s Job. Reads from MKV PVC, writes to output PVC.
 
 Vanilla JS, no build step. Single flat `app.js` with comment sections (`// === TIMELINE ===`, `// === GRID ===`, etc.).
 
-1. **Fetch manifest.json** on load. Try/catch on JSON.parse. Show error page with retry button on failure (fetch rejection or malformed JSON).
-2. **Build timeline**: compute year range from manifest `dateRange`. Render:
-   - Draggable scrubber with **discrete year snapping** (desktop/touch). Debounce grid re-render by ~150ms on rapid drag.
-   - Clickable year labels below scrubber (tap-friendly for grandparents)
-   - **Video density indicators**: proportional bars below each year label showing video count
-   - Big year display above scrubber
-3. **Filter videos by year**: video appears for all years in its dateStart–dateEnd range (span model). Videos with null dates shown in "Undated" section. **Empty year state**: centered "No videos from [year]" message.
-4. **DVD-grouped video grid**: group videos by `dvd` field. Render group header with DVD cover image + group title. Sub-cards for individual titles within each group. Single-title DVDs render as regular card with cover as secondary element. **Mobile**: stacked sections, no collapse, cover inline above cards.
-5. **Lazy thumbnails**: IntersectionObserver loads thumbnails when scrolled into view. Fallback: if IO unavailable (Safari < 12.2), load all eagerly. `img onerror` shows placeholder icon. **Preconnect hints** on video card hover (desktop) / tap-hold (mobile).
-6. **Player overlay**: dark background, native `<video>` element at 4:3 aspect ratio. Clean player: video only + close button. No cover in player. Close via X / ESC / click outside. **Focus management**: return focus to the card that was playing after close.
-7. **URL deep-linking**: read `window.location.hash` on load. If exactly 4 digits → set timeline to that year. Otherwise → look up as video ID, auto-open player. Update hash on year change. Listen to `hashchange` event for back button sync.
-8. **Keyboard navigation**: Left/Right arrows move timeline to prev/next year (only when player closed). Enter/Space on focused card opens player. Escape closes player.
-9. **Error handling**: video 404 → message in overlay. manifest fail → error page with retry.
-10. **Mobile**: single-column grid, year labels as primary nav (scrubber is harder on small screens).
+1. **Fetch manifest.json** on load. Try/catch on JSON.parse. **Loading state**: while fetching, show skeleton screen — the "Family Videos" title + empty timeline bar placeholder + 6 card-shaped warm gradient (`#FAF7F2` to `#F0EBE3`) placeholders in the grid area, pulsing gently (opacity 0.6 to 1.0, 1.5s ease-in-out infinite). This is rendered in the initial HTML (no JS dependency). **Error state**: on fetch failure or malformed JSON, show centered error message "Couldn't load videos" (DM Sans 18px, muted text) + amber "Try Again" button. No raw error text.
+2. **App header**: product title "Family Videos" (Instrument Serif 32px, primary text color) and subtitle "Drag to a year to browse" (DM Sans 14px, muted text). Positioned above the timeline, part of the sticky header. No logo, no nav, no settings. Title disappears on scroll (or shrinks to 18px inline with scrubber) to maximize viewport for content.
+3. **Build timeline**: compute year range from manifest `dateRange`. Render:
+   - Draggable scrubber with **discrete year snapping** (desktop/touch). **Two feedback speeds**: year display (72px number) updates instantly as scrubber moves. Grid re-render debounces by ~150ms after drag pauses. This gives immediate feedback ("I'm at 1994") while the video grid catches up.
+   - Clickable year labels below scrubber (tap-friendly for grandparents, DM Sans 14px, 44px min tap area)
+   - **Video density indicators**: proportional bars below each year label, max height 12px, min 2px, amber at 30% opacity. Proportional to video count (most-videos year = 12px, others scale linearly).
+   - Big year display above scrubber (72px Instrument Serif, centered)
+   - **Scrubber track**: 4px height, border color, full width of content area. **Handle**: 20px diameter amber circle, `border-radius: 9999px`, 44px invisible touch target. **Total timeline area**: ~140px on desktop (title 32px + subtitle 14px + 8px gap + year display 72px + scrubber + labels + density = ~140px sticky header).
+4. **Filter videos by year**: video appears for all years in its dateStart–dateEnd range (span model). Videos with null dates shown in "Undated" section (with Instrument Serif "Undated" heading at 32px). **Empty year state**: centered "No videos from [year]" message (DM Sans 18px, muted color, in the grid area).
+5. **DVD-grouped video grid**: group videos by `dvd` field. Render **utility heading** "Videos from [year]" (Instrument Serif 32px) above the grid. Each DVD group has: **group header** = DVD cover image (60px tall, 4:3 aspect, 4px border-radius) on the left + group title (DM Sans 16px, 600 weight) to the right of the cover, vertically centered. 16px gap between cover and title. 12px vertical padding on the header. Below the header: video cards in the grid layout with 16px gap. 32px gap between DVD groups. Single-title DVDs use the same section shell as multi-title DVDs (one playable item inside the group frame, same cover header pattern). **Mobile (<640px)**: stacked sections, no collapse, cover image full-width above group title (stacked vertically instead of side-by-side), cover scales to 100% width max 200px centered.
+6. **Lazy thumbnails**: IntersectionObserver loads thumbnails when scrolled into view. Fallback: if `IntersectionObserver` is undefined on page load, load all thumbnails eagerly (no timeout, no error detection — pure feature check). **Thumbnail loading state**: warm gradient placeholder (same as skeleton) until image loads, then 200ms fade-in. `img onerror` shows a muted video camera icon (CSS-only, no external asset) centered on the warm gradient background. **DVD cover fallback**: if cover JPG 404s, show the first letter of the DVD title in Instrument Serif 48px on the warm gradient background (monogram placeholder). **Preconnect hints** on video card hover (desktop) / tap-hold (mobile).
+7. **Player overlay**: dark background (#1A1612 at 92% opacity), native `<video>` element at 4:3 aspect ratio, max-width 90vw, max-height 80vh, centered. Set `poster` attribute to the video's thumbnail URL so the video shows the thumbnail before play and after ending (not a black void). Clean player: video only + close button (top-right, white X, 32px touch target). No cover in player. Close via X button / ESC key only (NOT click-outside — accidental taps on the dark background should not dismiss the player, especially for elderly users on touch devices). **Buffering**: use native `<video>` loading indicator (browser default). **Video 404**: replace player area with centered message "This video isn't available" (DM Sans 18px, white text on the dark overlay) + "Close" button. **Focus management**: return focus to the card that was playing after close.
+8. **URL deep-linking**: read `window.location.hash` on load. If exactly 4 digits → set timeline to that year. Otherwise → look up as video ID, auto-open player. **Invalid hash fallback**: if hash doesn't match a year or video ID, ignore it and show the first year in the collection (earliest dateStart). Update hash on year change. Listen to `hashchange` event for back button sync.
+9. **Keyboard navigation**: Left/Right arrows move timeline to prev/next year (only when player closed). Enter/Space on focused card opens player. Escape closes player.
+10. **Error handling**: video 404 → message in overlay. manifest fail → error page with retry.
+11. **Dark mode**: automatic via `prefers-color-scheme: dark` media query. No manual toggle (zero chrome). All colors defined as CSS custom properties (`:root` for light, `@media (prefers-color-scheme: dark)` override for dark). Variable names: `--bg`, `--surface`, `--text`, `--text-muted`, `--accent`, `--accent-hover`, `--border`, `--overlay`, `--shadow-card`, `--shadow-elevated`. Values from DESIGN.md light/dark mode sections.
+12. **Focus indicators**: all focusable elements (video cards, year labels, close button) get a visible focus ring: `2px solid var(--accent)` with `2px offset`, `100ms ease-out` transition. Only visible on `:focus-visible` (keyboard nav), not on click/tap.
+13. **Responsive layout**:
+   - **Desktop (≥1024px)**: multi-column video grid (`repeat(auto-fill, minmax(220px, 1fr))`), full timeline scrubber + year labels + density bars. Max content width 1120px, centered.
+   - **Tablet (640–1023px)**: same layout, grid adapts naturally (fewer columns). Timeline scrubber still usable at this width.
+   - **Mobile (<640px)**: single-column video grid. Timeline header transforms: year labels become large horizontal scrollable strip (44px min height per label, DM Sans 16px), scrubber becomes a thin 4px visual track indicator below the labels. Density bars hidden (too small to read). Year display stays at 48px (reduced from 72px). DVD group cover images scale to full-width above their card. "Family Videos" title at 24px. Subtitle hidden.
+   - **Touch targets**: all interactive elements minimum 44×44px tap area (WCAG 2.5.5). Year labels: 44px height with 8px horizontal padding. Close button: 44×44px. Scrubber handle: 32px visible, 44px touch area (invisible expanded hit zone).
+14. **Accessibility**:
+   - **ARIA landmarks**: `<main>` wraps content area, `<nav>` wraps timeline, `role="region"` on player overlay with `aria-label="Video player"`.
+   - **Screen reader**: year changes announced via `aria-live="polite"` region ("Showing videos from 1994"). Player open/close announced. Video count per year announced with year selection.
+   - **Reduced motion**: respect `prefers-reduced-motion` — disable card hover lift, skeleton pulse, thumbnail fade-in, player scale animation. Keep functional transitions (scrubber snap, overlay show/hide) but at 0ms duration.
+   - **Contrast**: primary text #2C2420 on #FAF7F2 = 9.8:1 (passes AAA at all sizes). Muted text #8B7E74 on #FAF7F2 = 3.76:1 (fails AA for small text). **Fix**: use muted text only at 16px+ body size, never for 12px metadata. For 12px/14px metadata, use a darker muted: #6B5E54 (~5:1 ratio, passes AA).
 
 **Files:**
 - `frontend/index.html`
@@ -219,7 +232,7 @@ Vanilla JS, no build step. Single flat `app.js` with comment sections (`// === T
 Slim Docker image: just the SPA files + nginx config.
 
 1. **nginx.conf**:
-   - `auth_basic` with `.htpasswd` (**mounted as k8s Secret**, not baked into image)
+   - `auth_basic "Family Videos"` with `.htpasswd` (**mounted as k8s Secret**, not baked into image). The realm string "Family Videos" makes the browser auth dialog say "Sign in to Family Videos" instead of displaying the hostname.
    - `limit_req zone=auth burst=5` — rate limit 5 req/s per IP (brute-force protection)
    - `location /videos/` + `/thumbs/` + `/covers/` → `Cache-Control: public, max-age=31536000, immutable` (cache-busting via `?v=<hash>` query params in manifest URLs handles re-transcoded assets)
    - `location /manifest.json` → `Cache-Control: no-cache`
@@ -339,6 +352,20 @@ Lanes A and B share the manifest.json schema as a contract. B can build against 
 - **Failure modes**: 0 critical gaps (was 2, both fixed)
 - **Lake Score**: 14/15 recommendations chose complete option
 
+## Completion Summary (Design Review)
+
+- **Initial score**: 5/10 — plan described features but not what users see
+- **Outside voices**: Codex (gpt-5.4) flagged 1 hard rejection (card-based layout) + 5 findings. Claude subagent found 11 issues (1 critical: contrast, 4 high, 6 medium).
+- **Pass 1 (Info Arch)**: 4→8. Added product title "Family Videos", instruction subtitle, utility headings, consistent DVD group rendering.
+- **Pass 2 (States)**: 3→9. Added skeleton loading, thumbnail/cover fallbacks, monogram placeholder, font-display swap, player error state.
+- **Pass 3 (Journey)**: 6→8. Set auth_basic realm to "Family Videos", video poster thumbnail (no black void on end), removed click-outside dismiss.
+- **Pass 4 (AI Slop)**: 7→8. Clean on all 10 blacklist patterns. Date range titles accepted.
+- **Pass 5 (Design Sys)**: 6→9. Added CSS custom properties spec, dark mode via prefers-color-scheme, focus ring styling.
+- **Pass 6 (Responsive)**: 3→9. Added 3 breakpoints, mobile timeline transformation, 44px touch targets, ARIA landmarks, screen reader announcements, reduced motion, contrast fix.
+- **Pass 7 (Decisions)**: 4 resolved (scrubber feedback, DVD header layout, handle dimensions, timeline height). 0 deferred.
+- **TODOS.md**: 1 item added (WCAG contrast audit P3).
+- **Final score**: 9/10.
+
 ## GSTACK REVIEW REPORT
 
 | Review | Trigger | Why | Runs | Status | Findings |
@@ -346,10 +373,10 @@ Lanes A and B share the manifest.json schema as a contract. B can build against 
 | CEO Review | `/plan-ceo-review` | Scope & strategy | 1 | CLEAR | 6 proposals, 5 accepted, 0 deferred. Mode: SELECTIVE EXPANSION |
 | Codex Review | `/codex review` | Independent 2nd opinion | 0 | — | — |
 | Eng Review | `/plan-eng-review` | Architecture & tests (required) | 1 | CLEAR (PLAN) | 9 issues, 0 critical gaps |
-| Design Review | `/plan-design-review` | UI/UX gaps | 0 | — | — |
+| Design Review | `/plan-design-review` | UI/UX gaps | 1 | CLEAR (FULL) | score: 5/10 → 9/10, 8 decisions |
 | DX Review | `/plan-devex-review` | Developer experience gaps | 0 | — | — |
-| Outside Voice | Codex via CEO + eng review | Independent plan challenge | 2 | issues_found | 14 findings (CEO), 16 findings (eng). 11 incorporated total |
+| Outside Voice | Codex via CEO + eng + design review | Independent plan challenge | 3 | issues_found | 14 (CEO), 16 (eng), 6 (design). 19 incorporated total |
 
-- **CROSS-MODEL:** Codex (gpt-5.4) outside voice caught remux bug, staging/idempotency conflict, per-title override gap, config-in-image friction, and cache invalidation issue. All resolved.
+- **CROSS-MODEL:** Design review outside voices: Codex flagged card-based layout + missing brand/headlines/CSS vars. Claude subagent found contrast failure + missing states + tap targets. Both agreed on no-brand-in-first-screen. All findings addressed.
 - **UNRESOLVED:** 0
-- **VERDICT:** CEO + ENG CLEARED. Eng review may be stale (1 commit + significant scope expansion from CEO review). Recommend re-running `/plan-eng-review` before implementation.
+- **VERDICT:** CEO + ENG + DESIGN CLEARED. Eng review may be stale (design review added responsive specs, accessibility, dark mode, CSS variables). Recommend re-running `/plan-eng-review` before implementation.

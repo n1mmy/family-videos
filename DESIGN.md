@@ -18,7 +18,8 @@
 - **UI/Labels:** DM Sans (same as body)
 - **Data/Tables:** DM Sans (tabular-nums) — for durations, video counts
 - **Code:** Not applicable (no code-facing UI)
-- **Loading:** Google Fonts CDN — `fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=Instrument+Serif`
+- **Loading:** Google Fonts CDN — `fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=Instrument+Serif&display=swap`
+- **Font display:** `swap` — show system fallback immediately, swap to custom font when loaded. Prevents invisible text on slow connections. Fallback stack: `Instrument Serif, Georgia, serif` for display, `DM Sans, -apple-system, sans-serif` for body.
 - **Scale:**
   - 72px — year display (Instrument Serif)
   - 48px — large headings (Instrument Serif)
@@ -35,7 +36,7 @@
 - **Background:** #FAF7F2 — warm off-white, like aged album paper
 - **Surface:** #FFFFFF — cards, overlays
 - **Primary text:** #2C2420 — warm near-black (never pure #000)
-- **Muted text:** #8B7E74 — warm gray for metadata, secondary info
+- **Muted text:** #8B7E74 — warm gray for secondary info at 16px+. For small text (12-14px), use **#6B5E54** instead (passes WCAG AA at all sizes)
 - **Accent:** #C68B3F — amber/gold. Evokes film stock, warmth, old photographs. Used for active states, CTAs, timeline handle.
 - **Accent hover:** #B07A32
 - **Border:** #E8E2DA — warm light border for cards and dividers

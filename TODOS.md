@@ -17,6 +17,13 @@ Covers are valuable for the grandparent experience (recognizable cover art). V1 
 
 **Context:** User explicitly said covers are "very valuable for grandma to see as part of the experience." Want both video frame thumbnails AND covers visible. UX TBD. **Update from CEO review:** DVD grouping with cover art headers is now in V1 scope. This TODO is about further refinement beyond the group header layout.
 
+### Full WCAG contrast audit (light + dark mode)
+Run a systematic contrast check across all text/background combinations in both light and dark mode. The design review identified that muted text (#8B7E74) fails AA at 12-14px and added a darker alternative (#6B5E54) for small text. A full audit should verify all combinations meet WCAG AA, especially dark mode where the charcoal background + muted text ratio hasn't been tested.
+
+**Context:** Design review Pass 6 found the issue. Inline fix applied for the most visible case (small metadata text), but other combinations (semantic colors on both backgrounds, accent text on surfaces) haven't been verified.
+**Priority:** P3
+**Depends on:** V1 frontend implementation (need actual rendered UI to test against).
+
 ### Play-all sequential mode
 Button to play all videos from the selected year in sequence, auto-advancing when each video finishes. Lean-back viewing: grandma hits play and watches without clicking each video.
 

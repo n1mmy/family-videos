@@ -225,6 +225,7 @@ body {
   text-align: center;
   line-height: 1;
   min-height: 72px;
+  font-variant-numeric: tabular-nums;
 }
 
 .timeline-scrubber {
@@ -305,10 +306,11 @@ body {
   flex-direction: column;
   align-items: center;
   justify-content: flex-end;
-  gap: 4px;
+  gap: var(--space-xs);
   white-space: nowrap;
   transition: color var(--duration-micro) ease-out;
   flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
 }
 
 .timeline-label:hover {
@@ -346,6 +348,7 @@ body {
   font-weight: 400;
   color: var(--text);
   margin-bottom: var(--space-lg);
+  font-variant-numeric: tabular-nums;
 }
 
 .empty-year {

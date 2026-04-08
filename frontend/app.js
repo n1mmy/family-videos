@@ -406,12 +406,54 @@ function createCoverElement(coverUrl, dvdId) {
 function createCoverMonogram(dvdId) {
   var mono = document.createElement('div');
   mono.className = 'dvd-cover-monogram';
-  mono.textContent = dvdId.charAt(0).toUpperCase();
+  var title = formatDvdTitle(dvdId);
+  // Find the first letter in the formatted title; fall back to a neutral symbol
+  // when the title is purely numeric (dates) so grandparents don't see "1".
+  var firstLetter = title.match(/[A-Za-z]/);
+  mono.textContent = firstLetter ? firstLetter[0].toUpperCase() : '\u25A0';
   mono.setAttribute('aria-hidden', 'true');
   return mono;
 }
 
+var MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                   'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+function parseDatePart(part) {
+  // Accept YYYY, YYYYMM, or YYYYMMDD; return {year, month?, day?} or null
+  if (/^\d{4}$/.test(part)) return { year: parseInt(part, 10) };
+  if (/^\d{6}$/.test(part)) {
+    var m = parseInt(part.slice(4, 6), 10);
+    if (m < 1 || m > 12) return null;
+    return { year: parseInt(part.slice(0, 4), 10), month: m };
+  }
+  if (/^\d{8}$/.test(part)) {
+    var m2 = parseInt(part.slice(4, 6), 10);
+    var d = parseInt(part.slice(6, 8), 10);
+    if (m2 < 1 || m2 > 12 || d < 1 || d > 31) return null;
+    return { year: parseInt(part.slice(0, 4), 10), month: m2, day: d };
+  }
+  return null;
+}
+
+function formatDatePart(p) {
+  if (!p) return '';
+  if (p.month) return MONTH_NAMES[p.month - 1] + ' ' + p.year;
+  return String(p.year);
+}
+
 function formatDvdTitle(dvdId) {
+  // Numeric date range: YYYYMM-YYYYMM or YYYYMMDD-YYYYMMDD → "Feb 1979 – Jan 1982"
+  var rangeMatch = dvdId.match(/^(\d{4,8})-(\d{4,8})$/);
+  if (rangeMatch) {
+    var start = parseDatePart(rangeMatch[1]);
+    var end = parseDatePart(rangeMatch[2]);
+    if (start && end) {
+      var s = formatDatePart(start);
+      var e = formatDatePart(end);
+      return s === e ? s : s + ' \u2013 ' + e;
+    }
+  }
+  // Default: replace dashes with spaces and title-case words
   return dvdId.replace(/-/g, ' ').replace(/\b\w/g, function(c) { return c.toUpperCase(); });
 }
 

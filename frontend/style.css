@@ -31,6 +31,10 @@
   --radius-md: 8px;
   --radius-lg: 12px;
   --radius-full: 9999px;
+
+  /* Anchored-spine layout */
+  --spine-width: 280px;
+  --top-bar-height: 96px;
 }
 
 /* === CSS Custom Properties (Dark Mode) === */
@@ -81,9 +85,273 @@ body {
 
 /* === Layout === */
 .app {
-  max-width: 1120px;
+  max-width: 1440px;
   margin: 0 auto;
-  padding: 0 var(--space-md);
+}
+
+.content-hidden {
+  display: none;
+}
+
+/* === Top Bar (sticky) === */
+.top-bar {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+
+.top-bar-inner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xl);
+  padding: var(--space-md) var(--space-xl);
+  max-width: 1440px;
+  margin: 0 auto;
+}
+
+.app-title {
+  font-family: 'Instrument Serif', Georgia, serif;
+  font-size: 36px;
+  font-weight: 400;
+  color: var(--text);
+  line-height: 1;
+  flex-shrink: 0;
+  text-wrap: balance;
+}
+
+/* === Top Timeline (scrubber + chevrons) === */
+.top-timeline {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.timeline-chevron,
+.spine-chevron {
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  color: var(--text);
+  cursor: pointer;
+  transition:
+    background var(--duration-micro) ease-out,
+    border-color var(--duration-micro) ease-out,
+    color var(--duration-micro) ease-out;
+}
+
+.timeline-chevron:hover,
+.spine-chevron:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+
+.timeline-chevron:disabled,
+.spine-chevron:disabled {
+  opacity: 0.35;
+  cursor: default;
+  background: none;
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.timeline-chevron svg,
+.spine-chevron svg {
+  width: 22px;
+  height: 22px;
+}
+
+.timeline-scrubber {
+  flex: 1;
+  position: relative;
+  padding: var(--space-md) var(--space-sm) 0;
+  touch-action: none;
+  min-width: 0;
+}
+
+.scrubber-track {
+  width: 100%;
+  height: 4px;
+  background: var(--border);
+  border-radius: var(--radius-full);
+  position: relative;
+}
+
+.scrubber-handle {
+  width: 20px;
+  height: 20px;
+  background: var(--accent);
+  border-radius: var(--radius-full);
+  position: absolute;
+  top: 50%;
+  left: 0;
+  transform: translate(-50%, -50%);
+  cursor: grab;
+  transition: left var(--duration-short) ease-out;
+  z-index: 2;
+}
+
+.scrubber-handle::before {
+  content: '';
+  position: absolute;
+  width: 44px;
+  height: 44px;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  border-radius: var(--radius-full);
+}
+
+.scrubber-handle:active {
+  cursor: grabbing;
+}
+
+.scrubber-handle:hover {
+  transform: translate(-50%, -50%) scale(1.15);
+}
+
+.scrubber-handle.dragging {
+  transition: none;
+}
+
+.timeline-labels {
+  display: flex;
+  justify-content: space-between;
+  padding-top: var(--space-xs);
+  overflow-x: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.timeline-labels::-webkit-scrollbar {
+  display: none;
+}
+
+.timeline-label {
+  font-family: 'DM Sans', -apple-system, sans-serif;
+  font-size: 13px;
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: var(--space-xs) var(--space-sm);
+  min-height: 32px;
+  min-width: 32px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  white-space: nowrap;
+  transition: color var(--duration-micro) ease-out;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.timeline-label:hover {
+  color: var(--text);
+}
+
+.timeline-label.active {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.density-bar {
+  display: block;
+  width: 100%;
+  max-width: 20px;
+  background: var(--accent);
+  opacity: 0.3;
+  border-radius: 1px;
+}
+
+/* === App Layout Grid (spine + content) === */
+.app-layout {
+  display: grid;
+  grid-template-columns: var(--spine-width) 1fr;
+  gap: 0;
+  max-width: 1440px;
+  margin: 0 auto;
+}
+
+/* === Left Spine (sticky) === */
+.spine {
+  position: sticky;
+  top: var(--top-bar-height);
+  align-self: start;
+  height: calc(100vh - var(--top-bar-height));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-lg);
+  padding: var(--space-xl) var(--space-lg);
+  border-right: 1px solid var(--border);
+}
+
+.spine-year {
+  font-family: 'Instrument Serif', Georgia, serif;
+  font-size: clamp(140px, 14vw, 220px);
+  font-weight: 400;
+  color: var(--text);
+  line-height: 0.9;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* === Content Column === */
+.content-column {
+  padding: var(--space-xl) var(--space-2xl) var(--space-3xl);
+  min-width: 0;
+}
+
+/* === Year Section === */
+.year-section {
+  padding: var(--space-xl) 0;
+  border-top: 1px solid var(--border);
+  scroll-margin-top: calc(var(--top-bar-height) + var(--space-md));
+}
+
+.year-section:first-child {
+  border-top: none;
+  padding-top: var(--space-md);
+}
+
+.year-section-heading {
+  font-family: 'Instrument Serif', Georgia, serif;
+  font-size: 48px;
+  font-weight: 400;
+  color: var(--text);
+  line-height: 1;
+  margin-bottom: var(--space-lg);
+  font-variant-numeric: tabular-nums;
+  text-wrap: balance;
+}
+
+.year-section.active .year-section-heading {
+  color: var(--accent);
+}
+
+.year-section-empty {
+  font-family: 'DM Sans', -apple-system, sans-serif;
+  font-size: 16px;
+  color: var(--text-muted);
+  padding: var(--space-md) 0 var(--space-lg);
+  font-style: italic;
 }
 
 /* === Skeleton Loading === */
@@ -186,183 +454,6 @@ body {
 .error-state button:hover,
 .player-error button:hover {
   background: var(--accent-hover);
-}
-
-/* === App Header === */
-.app-header {
-  position: sticky;
-  top: 0;
-  z-index: 100;
-  background: var(--bg);
-  padding-top: var(--space-md);
-  padding-bottom: var(--space-sm);
-}
-
-.app-title {
-  font-family: 'Instrument Serif', Georgia, serif;
-  font-size: 32px;
-  font-weight: 400;
-  color: var(--text);
-  text-align: center;
-  line-height: 1.2;
-  text-wrap: balance;
-}
-
-.app-subtitle {
-  font-family: 'DM Sans', -apple-system, sans-serif;
-  font-size: 14px;
-  color: var(--text-muted);
-  text-align: center;
-  margin-top: 2px;
-}
-
-/* === Timeline === */
-.timeline {
-  margin-top: var(--space-sm);
-  user-select: none;
-  -webkit-user-select: none;
-}
-
-.timeline-year-display {
-  font-family: 'Instrument Serif', Georgia, serif;
-  font-size: 72px;
-  font-weight: 400;
-  color: var(--text);
-  text-align: center;
-  line-height: 1;
-  min-height: 72px;
-  font-variant-numeric: tabular-nums;
-}
-
-.timeline-scrubber {
-  position: relative;
-  padding: var(--space-md) 0;
-  touch-action: none;
-}
-
-.scrubber-track {
-  width: 100%;
-  height: 4px;
-  background: var(--border);
-  border-radius: var(--radius-full);
-  position: relative;
-}
-
-.scrubber-handle {
-  width: 20px;
-  height: 20px;
-  background: var(--accent);
-  border-radius: var(--radius-full);
-  position: absolute;
-  top: 50%;
-  left: 0;
-  transform: translate(-50%, -50%);
-  cursor: grab;
-  transition: left var(--duration-short) ease-out;
-  z-index: 2;
-}
-
-.scrubber-handle::before {
-  content: '';
-  position: absolute;
-  width: 44px;
-  height: 44px;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  border-radius: var(--radius-full);
-}
-
-.scrubber-handle:active {
-  cursor: grabbing;
-}
-
-.scrubber-handle:hover {
-  transform: translate(-50%, -50%) scale(1.15);
-}
-
-.scrubber-handle.dragging {
-  transition: none;
-}
-
-.timeline-labels {
-  display: flex;
-  justify-content: space-between;
-  padding-top: var(--space-xs);
-  overflow-x: auto;
-  scrollbar-width: none;
-  -ms-overflow-style: none;
-}
-
-.timeline-labels::-webkit-scrollbar {
-  display: none;
-}
-
-.timeline-label {
-  font-family: 'DM Sans', -apple-system, sans-serif;
-  font-size: 14px;
-  color: var(--text-muted);
-  background: none;
-  border: none;
-  cursor: pointer;
-  padding: var(--space-xs) var(--space-sm);
-  min-height: 44px;
-  min-width: 44px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: flex-end;
-  gap: var(--space-xs);
-  white-space: nowrap;
-  transition: color var(--duration-micro) ease-out;
-  flex-shrink: 0;
-  font-variant-numeric: tabular-nums;
-}
-
-.timeline-label:hover {
-  color: var(--text);
-}
-
-.timeline-label.active {
-  color: var(--text);
-  font-weight: 700;
-  box-shadow: inset 0 -2px 0 0 var(--accent);
-}
-
-.density-bar {
-  display: block;
-  width: 100%;
-  max-width: 24px;
-  background: var(--accent);
-  opacity: 0.3;
-  border-radius: 1px;
-}
-
-/* === Content Area === */
-.content {
-  padding-bottom: var(--space-3xl);
-}
-
-.content-hidden {
-  display: none;
-}
-
-/* === Utility Heading === */
-.year-heading {
-  font-family: 'Instrument Serif', Georgia, serif;
-  font-size: 32px;
-  font-weight: 400;
-  color: var(--text);
-  margin-bottom: var(--space-lg);
-  font-variant-numeric: tabular-nums;
-  text-wrap: balance;
-}
-
-.empty-year {
-  text-align: center;
-  padding: var(--space-3xl) var(--space-md);
-  color: var(--text-muted);
-  font-size: 18px;
 }
 
 /* === DVD Group === */
@@ -620,8 +711,6 @@ body {
   color: var(--text);
 }
 
-/* button styles are shared with .error-state button above */
-
 /* === Screen Reader Only === */
 .sr-only {
   position: absolute;
@@ -639,6 +728,8 @@ body {
 .video-card:focus-visible,
 .timeline-label:focus-visible,
 .scrubber-handle:focus-visible,
+.timeline-chevron:focus-visible,
+.spine-chevron:focus-visible,
 .player-close:focus-visible,
 .error-state button:focus-visible,
 .player-error button:focus-visible {
@@ -649,41 +740,96 @@ body {
 .video-card:focus:not(:focus-visible),
 .timeline-label:focus:not(:focus-visible),
 .scrubber-handle:focus:not(:focus-visible),
+.timeline-chevron:focus:not(:focus-visible),
+.spine-chevron:focus:not(:focus-visible),
 .player-close:focus:not(:focus-visible) {
   outline: none;
 }
 
 /* === Responsive: Tablet (640-1023px) === */
 @media (max-width: 1023px) {
-  .app {
-    padding: 0 var(--space-sm);
+  :root {
+    --spine-width: 200px;
+  }
+
+  .top-bar-inner {
+    padding: var(--space-md) var(--space-lg);
+    gap: var(--space-lg);
+  }
+
+  .content-column {
+    padding: var(--space-lg) var(--space-xl) var(--space-3xl);
+  }
+
+  .year-section-heading {
+    font-size: 40px;
   }
 }
 
 /* === Responsive: Mobile (<640px) === */
 @media (max-width: 639px) {
+  :root {
+    --top-bar-height: 140px;
+  }
+
+  .top-bar-inner {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-sm);
+    padding: var(--space-sm) var(--space-md);
+  }
+
   .app-title {
     font-size: 24px;
+    text-align: center;
   }
 
-  .app-subtitle {
-    display: none;
+  .top-timeline {
+    width: 100%;
   }
 
-  .timeline-year-display {
-    font-size: 48px;
-    min-height: 48px;
-  }
-
-  .timeline-labels {
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    padding-bottom: var(--space-xs);
+  .timeline-chevron {
+    width: 40px;
+    height: 40px;
   }
 
   .timeline-label {
-    font-size: 16px;
+    font-size: 14px;
+  }
+
+  /* Collapse the grid: spine becomes a compact top banner */
+  .app-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .spine {
+    position: static;
+    height: auto;
+    flex-direction: row;
+    justify-content: center;
+    gap: var(--space-md);
+    padding: var(--space-md);
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .spine-year {
+    font-size: 72px;
+    line-height: 1;
+  }
+
+  /* On mobile the spine is a pure year anchor — the top-bar chevrons
+     become the sole stepper so grandparents have one obvious target. */
+  .spine-chevron {
+    display: none;
+  }
+
+  .content-column {
+    padding: var(--space-md) var(--space-md) var(--space-3xl);
+  }
+
+  .year-section-heading {
+    font-size: 32px;
   }
 
   .density-bar {
@@ -696,8 +842,8 @@ body {
 
   .dvd-group-header {
     flex-direction: column;
-    align-items: center;
-    text-align: center;
+    align-items: flex-start;
+    text-align: left;
   }
 
   .dvd-cover {
@@ -715,10 +861,6 @@ body {
 
   .skeleton-grid {
     grid-template-columns: 1fr;
-  }
-
-  .year-heading {
-    font-size: 24px;
   }
 
   .player-container {

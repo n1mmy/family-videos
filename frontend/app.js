@@ -9,13 +9,21 @@ var state = {
   years: [],
   currentYear: null,
   videosByYear: {},
+  // Primary-year grouping: a DVD group appears exactly once, at the year
+  // of its earliest video. Used for the editorial flow in the content column.
+  dvdGroupsByYear: {},
+  // Subset of state.years that have at least one DVD group anchored there.
+  // Chevrons and keyboard navigation step through this, not state.years.
+  yearsWithContent: [],
   maxVideosInYear: 0,
   playerVideoId: null,
   lastFocusedCard: null,
   isDragging: false,
   numericYears: [],
   thumbnailObserver: null,
-  scrubberInitialized: false
+  sectionObserver: null,
+  scrubberInitialized: false,
+  programmaticScrollUntil: 0
 };
 
 // === HELPERS ===
@@ -89,6 +97,10 @@ function announce(msg) {
   if (el) el.textContent = msg;
 }
 
+function prefersReducedMotion() {
+  return matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
 // === MANIFEST ===
 function fetchManifest() {
   $('#skeleton').style.display = '';
@@ -156,12 +168,43 @@ function initApp(data) {
     state.years.push('undated');
   }
 
+  // Build primary-year → DVD-groups map for the editorial flow.
+  // Each DVD appears exactly once, anchored at the year of its earliest
+  // video. This keeps multi-year DVDs from duplicating across every year
+  // they touch, and lets the content column flow as a single chronological
+  // stream skipping years with no content.
+  var dvdByPrimaryYear = {};
+  var dvdSeen = {};
+  for (var vi = 0; vi < data.videos.length; vi++) {
+    var vid = data.videos[vi];
+    var primaryYear = getYearFromDate(vid.dateStart);
+    if (primaryYear === null) primaryYear = 'undated';
+    var dvdKey = vid.dvd;
+    var groupKey = primaryYear + '|' + dvdKey;
+    if (!dvdSeen[groupKey]) {
+      dvdSeen[groupKey] = { dvd: dvdKey, cover: vid.cover, videos: [] };
+      if (!dvdByPrimaryYear[primaryYear]) dvdByPrimaryYear[primaryYear] = [];
+      dvdByPrimaryYear[primaryYear].push(dvdSeen[groupKey]);
+    }
+    dvdSeen[groupKey].videos.push(vid);
+  }
+  state.dvdGroupsByYear = dvdByPrimaryYear;
+
+  // Years with at least one DVD group anchored at them — used for chevron
+  // stepping, keyboard nav, and the rendered section flow.
+  state.yearsWithContent = state.years.filter(function(y) {
+    return dvdByPrimaryYear[y] && dvdByPrimaryYear[y].length > 0;
+  });
+
   // Show UI
   $('#skeleton').style.display = 'none';
-  $('.timeline').classList.remove('content-hidden');
+  $('.top-timeline').classList.remove('content-hidden');
+  $('.spine').classList.remove('content-hidden');
   $('#video-content').classList.remove('content-hidden');
 
   buildTimeline();
+  renderAllSections();
+  initSectionObserver();
   applyHash();
 }
 
@@ -185,7 +228,11 @@ function buildTimeline() {
     label.type = 'button';
     label.setAttribute('data-year', year);
     label.addEventListener('click', (function(y) {
-      return function() { setYear(y); };
+      return function() {
+        // Clicking an empty year snaps to the nearest year with content.
+        var target = nearestContentYear(y);
+        if (target !== null) setYear(target, { scroll: true });
+      };
     })(year));
 
     // Density bar inside label (above the year text)
@@ -209,61 +256,87 @@ function buildTimeline() {
     labelsEl.appendChild(label);
   }
 
-  // Drag handling
   initScrubberDrag();
+  initChevrons();
 }
 
-function setYear(year) {
+// Update spine + scrubber + labels display for a given year. Does NOT scroll.
+function syncYearDisplay(year) {
+  if (year === state.currentYear) return;
   state.currentYear = year;
 
-  // Update year display (instant)
-  var display = $('.timeline-year-display');
-  display.textContent = year === 'undated' ? 'Undated' : year;
+  // Spine year
+  var spine = $('#spine-year');
+  if (spine) {
+    spine.textContent = year === 'undated' ? 'Undated' : year;
+  }
 
-  // Update handle position (instant)
+  // Scrubber handle position
   positionHandle(year);
 
-  // Update active label
+  // Active timeline label + active section highlight
   var labels = $$('.timeline-label');
   for (var i = 0; i < labels.length; i++) {
     var labelYear = labels[i].getAttribute('data-year');
     var isActive = labelYear === String(year);
     labels[i].classList.toggle('active', isActive);
     if (isActive && !state.isDragging) {
-      var prefersReducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
       labels[i].scrollIntoView({
         block: 'nearest',
         inline: 'center',
-        behavior: prefersReducedMotion ? 'auto' : 'smooth'
+        behavior: prefersReducedMotion() ? 'auto' : 'smooth'
       });
     }
   }
 
-  // Update ARIA
+  var sections = $$('.year-section');
+  for (var s = 0; s < sections.length; s++) {
+    var sy = sections[s].getAttribute('data-year');
+    sections[s].classList.toggle('active', sy === String(year));
+  }
+
+  // ARIA
   var handle = $('.scrubber-handle');
   if (year !== 'undated') {
     handle.setAttribute('aria-valuenow', year);
     handle.setAttribute('aria-valuetext', year);
   }
 
+  // Update chevron disabled state
+  updateChevronState();
+
   // Screen reader announcement
   var count = (state.videosByYear[year] || []).length;
   var yearLabel = year === 'undated' ? 'undated' : year;
   announce('Showing ' + count + ' video' + (count !== 1 ? 's' : '') + ' from ' + yearLabel);
 
-  // Update hash (without triggering hashchange re-render)
+  // Hash (without triggering hashchange re-render)
   var newHash = year === 'undated' ? '' : '#' + year;
   if (window.location.hash !== newHash) {
     history.replaceState(null, '', newHash || window.location.pathname);
   }
-
-  // Debounced grid render
-  debouncedRenderGrid();
 }
 
-var debouncedRenderGrid = debounce(function() {
-  renderGrid();
-}, DEBOUNCE_MS);
+// User-initiated year change: sync display AND scroll to the section.
+function setYear(year, opts) {
+  opts = opts || {};
+  syncYearDisplay(year);
+  if (opts.scroll) {
+    scrollToYearSection(year);
+  }
+}
+
+function scrollToYearSection(year) {
+  var section = document.querySelector('.year-section[data-year="' + year + '"]');
+  if (!section) return;
+  // Mark scroll as programmatic so the IntersectionObserver doesn't
+  // ping-pong the spine while we're smooth-scrolling.
+  state.programmaticScrollUntil = Date.now() + 700;
+  section.scrollIntoView({
+    block: 'start',
+    behavior: prefersReducedMotion() ? 'auto' : 'smooth'
+  });
+}
 
 function positionHandle(year) {
   var handle = $('.scrubber-handle');
@@ -297,7 +370,7 @@ function initScrubberDrag() {
     var year = getYearFromPointer(clientX);
     if (year && year !== state.currentYear) {
       handle.classList.add('dragging');
-      setYear(year);
+      setYear(year, { scroll: true });
     }
   }
 
@@ -330,72 +403,195 @@ function initScrubberDrag() {
   // Click on track to jump
   track.addEventListener('click', function(e) {
     var year = getYearFromPointer(e.clientX);
-    if (year) setYear(year);
+    if (year) setYear(year, { scroll: true });
   });
 }
 
-// === GRID ===
-function renderGrid() {
+// === CHEVRONS (top bar + spine) ===
+function initChevrons() {
+  var prevBtns = [$('.timeline-chevron-left'), $('.spine-chevron-up')];
+  var nextBtns = [$('.timeline-chevron-right'), $('.spine-chevron-down')];
+
+  for (var i = 0; i < prevBtns.length; i++) {
+    if (prevBtns[i]) prevBtns[i].addEventListener('click', stepPrev);
+  }
+  for (var j = 0; j < nextBtns.length; j++) {
+    if (nextBtns[j]) nextBtns[j].addEventListener('click', stepNext);
+  }
+  updateChevronState();
+}
+
+function stepPrev() {
+  var years = state.yearsWithContent;
+  var idx = years.indexOf(state.currentYear);
+  if (idx === -1) {
+    // Current year is an "empty" year — jump to the nearest content year
+    // at or before it. Fall back to the first content year.
+    var nearest = nearestContentYear(state.currentYear);
+    if (nearest !== null && nearest !== state.currentYear) {
+      setYear(nearest, { scroll: true });
+    }
+    return;
+  }
+  if (idx > 0) {
+    setYear(years[idx - 1], { scroll: true });
+  }
+}
+
+function stepNext() {
+  var years = state.yearsWithContent;
+  var idx = years.indexOf(state.currentYear);
+  if (idx === -1) {
+    var nearest = nearestContentYear(state.currentYear);
+    if (nearest !== null && nearest !== state.currentYear) {
+      setYear(nearest, { scroll: true });
+    }
+    return;
+  }
+  if (idx < years.length - 1) {
+    setYear(years[idx + 1], { scroll: true });
+  }
+}
+
+function updateChevronState() {
+  var years = state.yearsWithContent;
+  var idx = years.indexOf(state.currentYear);
+  var atStart = idx <= 0;
+  var atEnd = idx < 0 || idx >= years.length - 1;
+  var prev = [$('.timeline-chevron-left'), $('.spine-chevron-up')];
+  var next = [$('.timeline-chevron-right'), $('.spine-chevron-down')];
+  for (var i = 0; i < prev.length; i++) {
+    if (prev[i]) prev[i].disabled = atStart;
+  }
+  for (var j = 0; j < next.length; j++) {
+    if (next[j]) next[j].disabled = atEnd;
+  }
+}
+
+// === GRID: render year sections for every year WITH content ===
+// Years with zero primary-anchored DVD groups are omitted from the flow,
+// so the editorial column stays continuous. The timeline still shows every
+// year as a tick mark, and clicking an empty year scrolls to the nearest
+// year with content.
+function renderAllSections() {
   var container = $('#video-content');
   container.innerHTML = '';
 
-  var year = state.currentYear;
-  var videos = state.videosByYear[year] || [];
+  for (var i = 0; i < state.yearsWithContent.length; i++) {
+    var year = state.yearsWithContent[i];
+    var groups = state.dvdGroupsByYear[year] || [];
+    if (groups.length === 0) continue;
 
-  if (videos.length === 0) {
-    var empty = document.createElement('div');
-    empty.className = 'empty-year';
-    empty.textContent = year === 'undated'
-      ? 'No undated videos'
-      : 'No videos from ' + year;
-    container.appendChild(empty);
-    return;
-  }
+    var section = document.createElement('section');
+    section.className = 'year-section';
+    section.setAttribute('data-year', year);
 
-  // Utility heading
-  var heading = document.createElement('h2');
-  heading.className = 'year-heading';
-  heading.textContent = year === 'undated'
-    ? 'Undated'
-    : 'Videos from ' + year;
-  container.appendChild(heading);
+    var heading = document.createElement('h2');
+    heading.className = 'year-section-heading';
+    heading.textContent = year === 'undated' ? 'Undated' : year;
+    section.appendChild(heading);
 
-  // Group by DVD
-  var groups = groupByDvd(videos);
+    for (var g = 0; g < groups.length; g++) {
+      var group = groups[g];
+      var groupEl = document.createElement('div');
+      groupEl.className = 'dvd-group';
 
-  for (var g = 0; g < groups.length; g++) {
-    var group = groups[g];
-    var groupEl = document.createElement('div');
-    groupEl.className = 'dvd-group';
+      var header = document.createElement('div');
+      header.className = 'dvd-group-header';
 
-    // Group header
-    var header = document.createElement('div');
-    header.className = 'dvd-group-header';
+      var coverEl = createCoverElement(group.cover, group.dvd);
+      header.appendChild(coverEl);
 
-    var coverEl = createCoverElement(group.cover, group.dvd);
-    header.appendChild(coverEl);
+      var titleEl = document.createElement('span');
+      titleEl.className = 'dvd-group-title';
+      titleEl.textContent = formatDvdTitle(group.dvd);
+      header.appendChild(titleEl);
 
-    var titleEl = document.createElement('span');
-    titleEl.className = 'dvd-group-title';
-    titleEl.textContent = formatDvdTitle(group.dvd);
-    header.appendChild(titleEl);
+      groupEl.appendChild(header);
 
-    groupEl.appendChild(header);
+      var grid = document.createElement('div');
+      grid.className = 'video-grid';
 
-    // Video grid
-    var grid = document.createElement('div');
-    grid.className = 'video-grid';
+      for (var v = 0; v < group.videos.length; v++) {
+        var card = createVideoCard(group.videos[v]);
+        grid.appendChild(card);
+      }
 
-    for (var v = 0; v < group.videos.length; v++) {
-      var card = createVideoCard(group.videos[v]);
-      grid.appendChild(card);
+      groupEl.appendChild(grid);
+      section.appendChild(groupEl);
     }
 
-    groupEl.appendChild(grid);
-    container.appendChild(groupEl);
+    container.appendChild(section);
   }
 
   observeThumbnails();
+}
+
+// Return the nearest year in state.yearsWithContent to a given year.
+// Used when the user clicks an "empty" year label or navigates to one
+// via hash — we jump to the nearest actual content rather than showing
+// an empty page.
+function nearestContentYear(year) {
+  var content = state.yearsWithContent;
+  if (content.length === 0) return null;
+  if (content.indexOf(year) !== -1) return year;
+  if (year === 'undated') {
+    // Undated is either present in yearsWithContent or it isn't; if not,
+    // fall back to the last numeric year with content.
+    return content[content.length - 1];
+  }
+  var best = content[0];
+  var bestDist = Math.abs(year - best);
+  for (var i = 1; i < content.length; i++) {
+    var c = content[i];
+    if (c === 'undated') continue;
+    var d = Math.abs(year - c);
+    if (d < bestDist) { best = c; bestDist = d; }
+  }
+  return best;
+}
+
+// === SCROLL-SPY: which year section is currently anchored ===
+function initSectionObserver() {
+  if (state.sectionObserver) {
+    state.sectionObserver.disconnect();
+    state.sectionObserver = null;
+  }
+  if (!('IntersectionObserver' in window)) return;
+
+  // An anchor line ~25% down from the sticky top bar; the last section
+  // to cross it becomes the "current" year.
+  var observer = new IntersectionObserver(function(entries) {
+    // If we're mid-programmatic-scroll, let setYear own the state.
+    if (Date.now() < state.programmaticScrollUntil) return;
+
+    // Find the visible entry closest to the top of the observer's rootMargin line.
+    var best = null;
+    for (var i = 0; i < entries.length; i++) {
+      var entry = entries[i];
+      if (!entry.isIntersecting) continue;
+      if (!best || entry.boundingClientRect.top < best.boundingClientRect.top) {
+        best = entry;
+      }
+    }
+    if (best) {
+      var year = best.target.getAttribute('data-year');
+      if (year !== String(state.currentYear)) {
+        var next = year === 'undated' ? 'undated' : parseInt(year, 10);
+        syncYearDisplay(next);
+      }
+    }
+  }, {
+    // Top-anchor line about 120px below the sticky top bar.
+    rootMargin: '-120px 0px -70% 0px',
+    threshold: 0
+  });
+
+  var sections = $$('.year-section');
+  for (var i = 0; i < sections.length; i++) {
+    observer.observe(sections[i]);
+  }
+  state.sectionObserver = observer;
 }
 
 function createCoverElement(coverUrl, dvdId) {
@@ -670,19 +866,23 @@ document.addEventListener('mouseover', function(e) {
 // === DEEP LINKING ===
 function applyHash() {
   var hash = window.location.hash.replace('#', '');
+  var firstContentYear = state.yearsWithContent[0] || state.years[0];
 
   if (!hash) {
-    setYear(state.years[0]);
+    setYear(firstContentYear, { scroll: false });
     return;
   }
 
   // 4-digit year check
   if (/^\d{4}$/.test(hash)) {
     var year = parseInt(hash, 10);
-    if (state.videosByYear[year]) {
-      setYear(year);
+    // Snap to nearest year with content so empty-year deep links still
+    // land on something visible.
+    var target = nearestContentYear(year);
+    if (target !== null) {
+      setYear(target, { scroll: true });
     } else {
-      setYear(state.years[0]);
+      setYear(firstContentYear, { scroll: false });
     }
     return;
   }
@@ -691,11 +891,12 @@ function applyHash() {
   var video = findVideoById(hash);
   if (video) {
     var videoYear = getYearFromDate(video.dateStart) || 'undated';
-    setYear(videoYear);
+    var targetYear = nearestContentYear(videoYear) || firstContentYear;
+    setYear(targetYear, { scroll: true });
     // Delay player open slightly so grid renders first
     setTimeout(function() { openPlayer(hash); }, DEBOUNCE_MS + 50);
   } else {
-    setYear(state.years[0]);
+    setYear(firstContentYear, { scroll: false });
   }
 }
 
@@ -725,25 +926,15 @@ document.addEventListener('keydown', function(e) {
   if (state.playerVideoId) return;
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
 
-  var numericYears = state.numericYears;
-
   if (e.key === 'ArrowLeft') {
     e.preventDefault();
-    var idx = numericYears.indexOf(state.currentYear);
-    if (idx > 0) {
-      setYear(numericYears[idx - 1]);
-    } else if (state.currentYear === 'undated' && numericYears.length > 0) {
-      setYear(numericYears[numericYears.length - 1]);
-    }
+    stepPrev();
     return;
   }
 
   if (e.key === 'ArrowRight') {
     e.preventDefault();
-    var idx2 = numericYears.indexOf(state.currentYear);
-    if (idx2 >= 0 && idx2 < numericYears.length - 1) {
-      setYear(numericYears[idx2 + 1]);
-    }
+    stepNext();
     return;
   }
 

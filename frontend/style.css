@@ -294,8 +294,10 @@ body {
   min-height: 44px;
   min-width: 44px;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-end;
+  gap: 4px;
   white-space: nowrap;
   transition: color var(--duration-micro) ease-out;
   flex-shrink: 0;
@@ -310,21 +312,13 @@ body {
   font-weight: 600;
 }
 
-.timeline-density {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-end;
-  height: 12px;
-  padding: 0;
-}
-
 .density-bar {
+  display: block;
+  width: 100%;
+  max-width: 24px;
   background: var(--accent);
   opacity: 0.3;
   border-radius: 1px;
-  min-width: 2px;
-  flex: 1;
-  margin: 0 1px;
 }
 
 /* === Content Area === */
@@ -679,7 +673,7 @@ body {
     font-size: 16px;
   }
 
-  .timeline-density {
+  .density-bar {
     display: none;
   }
 

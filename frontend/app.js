@@ -159,9 +159,7 @@ function initApp(data) {
 // === TIMELINE ===
 function buildTimeline() {
   var labelsEl = $('.timeline-labels');
-  var densityEl = $('.timeline-density');
   labelsEl.innerHTML = '';
-  densityEl.innerHTML = '';
 
   // Set slider ARIA
   var handle = $('.scrubber-handle');
@@ -176,16 +174,14 @@ function buildTimeline() {
     var label = document.createElement('button');
     label.className = 'timeline-label';
     label.type = 'button';
-    label.textContent = year === 'undated' ? 'Undated' : year;
     label.setAttribute('data-year', year);
     label.addEventListener('click', (function(y) {
       return function() { setYear(y); };
     })(year));
-    labelsEl.appendChild(label);
 
-    // Density bar
+    // Density bar inside label (above the year text)
     if (year !== 'undated') {
-      var bar = document.createElement('div');
+      var bar = document.createElement('span');
       bar.className = 'density-bar';
       var count = (state.videosByYear[year] || []).length;
       if (count === 0) {
@@ -194,8 +190,14 @@ function buildTimeline() {
         var h = Math.max(2, Math.round((count / state.maxVideosInYear) * 12));
         bar.style.height = h + 'px';
       }
-      densityEl.appendChild(bar);
+      label.appendChild(bar);
     }
+
+    var text = document.createElement('span');
+    text.textContent = year === 'undated' ? 'Undated' : year;
+    label.appendChild(text);
+
+    labelsEl.appendChild(label);
   }
 
   // Drag handling

@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
 """Family Videos transcode pipeline.
 
-Reads MKV files from input directory, transcodes to MP4,
-generates smart thumbnails, copies DVD covers, builds a
-validated manifest.json, and atomically publishes via symlink swap.
+Reads MKV files from input directory, transcodes to MP4, generates smart
+thumbnails, copies DVD covers, and builds a validated manifest.json. New
+outputs are written to a hidden staging dir inside /data/served and
+published via per-file os.replace; the atomic manifest.json rename at the
+end of publish_staging is the commit point. Unchanged files are
+represented in staging as cheap absolute symlinks into served.
 """
 
 import argparse
+import errno
+import fcntl
 import json
 import logging
 import os
@@ -15,7 +20,10 @@ import subprocess
 import sys
 import tempfile
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 from parse import (
     compute_file_hash,
@@ -33,19 +41,72 @@ except ImportError:
 log = logging.getLogger("transcode")
 
 
+# The three published content subdirs under /data/served. Anything else at
+# the root of served (.healthz, .staging-*, etc.) is bookkeeping that the
+# pipeline owns but does not publish via the manifest.
+CONTENT_SUBDIRS = ("videos", "thumbs", "covers")
+
+# Hidden bookkeeping files at the root of served. STAGING_PREFIX is
+# shared between mkdtemp (creates) and reap_stale_staging (reaps), so
+# they cannot drift. LOCK_FILENAME is the single-writer advisory lock.
+STAGING_PREFIX = ".staging-"
+LOCK_FILENAME = ".transcode.lock"
+
+
+@dataclass(frozen=True)
+class PipelineConfig:
+    """Frozen configuration for one pipeline run.
+
+    Replaces an 8-positional-arg call between run_pipeline and
+    _run_pipeline_body so parameter order can't drift between caller
+    and callee. All paths are Path objects (not str) so consumers
+    don't have to keep coercing.
+    """
+    input_dir: Path
+    output_dir: Path
+    overrides_path: Optional[str]
+    schema_path: Path
+    dry_run: bool
+    min_duration: int
+    workers: Optional[int]
+
+
 # --- Disk space ---
 
 
 def check_disk_space(served_dir):
-    """Pre-flight: verify available disk space >= 2x served directory size."""
+    """Pre-flight: verify served filesystem has headroom for new transcodes.
+
+    Staging now lives inside served_dir and symlinks existing files into
+    place, so the published tree doesn't temporarily double in size. We
+    just need enough free space to write whatever new MP4s this run
+    produces. We can't cheaply predict that, so require 10% of current
+    published content as headroom (with a 1 GiB floor for empty/new
+    served dirs). Only the published CONTENT_SUBDIRS are measured —
+    leftover .staging-* dirs from prior crashed runs (which contain
+    symlinks that would otherwise inflate the size via stat-follows) are
+    intentionally excluded.
+    """
     if not served_dir.exists():
         return True
-    served_size = sum(f.stat().st_size for f in served_dir.rglob("*") if f.is_file())
+    served_size = 0
+    for subdir in CONTENT_SUBDIRS:
+        d = served_dir / subdir
+        if not d.is_dir():
+            continue
+        # rglob (not iterdir) so we keep counting if any CONTENT_SUBDIR
+        # ever grows a nested layout (e.g. videos/<dvd>/title.mp4). The
+        # leftover-staging exclusion is enforced by only iterating known
+        # subdirs at the top level, so recursion under them is safe.
+        for f in d.rglob("*"):
+            if f.is_file() and not f.is_symlink():
+                served_size += f.stat().st_size
     usage = shutil.disk_usage(served_dir)
-    needed = served_size * 2
+    needed = max(served_size // 10, 1024 * 1024 * 1024)
     if usage.free < needed:
         log.error(
-            "Insufficient disk space: need %d MB, have %d MB",
+            "Insufficient disk space on %s: need %d MB headroom, have %d MB free",
+            served_dir,
             needed // (1024 * 1024),
             usage.free // (1024 * 1024),
         )
@@ -57,19 +118,127 @@ def check_disk_space(served_dir):
 
 
 def copy_served_to_staging(served_dir, staging_dir):
-    """Copy existing served content to staging for idempotent updates."""
-    # Resolve symlink to get the real directory
-    real_served = served_dir.resolve() if served_dir.is_symlink() else served_dir
-    if real_served.is_dir():
-        shutil.copytree(real_served, staging_dir, dirs_exist_ok=True)
-        log.info("Copied existing served content to staging")
+    """Symlink existing served content into staging for idempotent updates.
+
+    Uses absolute symlinks instead of full copies — staging now lives on
+    the same filesystem as served, and CephFS handles symlinks much more
+    cheaply than hardlinks (which incur per-link MDS bookkeeping). Only
+    the three known content subdirs are linked, which avoids any risk of
+    recursing into the staging dir itself or other unexpected siblings
+    (e.g., .healthz, prior staging dirs).
+
+    publish_staging will skip these symlinks at publish time — the served
+    target is already where it needs to be. Re-transcodes break the link
+    safely because process_one_title unlinks the symlink before invoking
+    ffmpeg, so the served target is never opened with O_TRUNC.
+    """
+    real_served = served_dir.resolve()
+    if not real_served.is_dir():
+        return
+    count = 0
+    for subdir in CONTENT_SUBDIRS:
+        src_dir = real_served / subdir
+        if not src_dir.is_dir():
+            continue
+        dst_dir = staging_dir / subdir
+        dst_dir.mkdir(parents=True, exist_ok=True)
+        for f in src_dir.iterdir():
+            if not f.is_file() or f.is_symlink():
+                continue
+            dst = dst_dir / f.name
+            if dst.exists() or dst.is_symlink():
+                dst.unlink()
+            # f is already absolute (parent real_served was resolve()'d
+            # above) and not a symlink, so f.resolve() would be a wasted
+            # realpath() syscall per file on CephFS.
+            os.symlink(f, dst)
+            count += 1
+    log.info("Symlinked %d existing files into staging", count)
 
 
 def prepare_staging(staging_dir):
     """Ensure staging directory has the expected subdirectories."""
-    (staging_dir / "videos").mkdir(parents=True, exist_ok=True)
-    (staging_dir / "thumbs").mkdir(exist_ok=True)
-    (staging_dir / "covers").mkdir(exist_ok=True)
+    staging_dir.mkdir(parents=True, exist_ok=True)
+    for subdir in CONTENT_SUBDIRS:
+        (staging_dir / subdir).mkdir(exist_ok=True)
+
+
+@contextmanager
+def _exclusive_lock(lock_path):
+    """Acquire an exclusive non-blocking advisory flock on `lock_path`.
+
+    Yields once with the lock held, releases on exit (including on
+    exception).
+
+    Open flags:
+    - O_CLOEXEC: closes the fd on exec(). ffmpeg subprocesses spawned
+      via subprocess.run therefore do NOT inherit this fd. Note that
+      O_CLOEXEC does NOT apply to fork(); ProcessPoolExecutor workers
+      started with the default 'fork' start method on Linux DO inherit
+      the fd (and the underlying flock, since flock state lives on the
+      shared open file description). This is intentional and
+      load-bearing: if the parent dies unexpectedly (SIGKILL, OOM,
+      eviction), the flock is held by the still-running workers until
+      they finish, preventing a concurrent pipeline from running the
+      reaper and deleting staging out from under them. Do not switch
+      to forkserver/spawn without first solving that race another way.
+    - O_NOFOLLOW: rejects a pre-planted final-component symlink at the
+      lock path with ELOOP, so an operator-placed symlink can't cause
+      this process to lock an unrelated inode.
+
+    Raises BlockingIOError if another process already holds the lock.
+    Other OSErrors from open or flock propagate to the caller.
+    """
+    fd = os.open(
+        str(lock_path),
+        os.O_CREAT | os.O_WRONLY | os.O_CLOEXEC | os.O_NOFOLLOW,
+        0o600,
+    )
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        yield
+    finally:
+        # Closing the fd releases the flock; no explicit LOCK_UN needed.
+        os.close(fd)
+
+
+def reap_stale_staging(output_dir):
+    """Remove leftover .staging-* entries from prior crashed runs.
+
+    With staging now living inside output_dir on the persistent CephFS PVC
+    (rather than the container's ephemeral root), crash residue is no
+    longer wiped on pod restart. This reaper removes any sibling
+    .staging-* found at the root of output_dir before a new run begins.
+
+    Symlinks are handled explicitly: a stray .staging-* symlink is just
+    unlinked (not followed), so a misconfigured operator-planted symlink
+    can never escalate to deleting its target. Real .staging-* dirs are
+    rmtree'd. Regular files matching the prefix are skipped (they
+    shouldn't exist, but defensively we don't touch them).
+
+    Safe because nginx only aliases CONTENT_SUBDIRS, and run_pipeline
+    holds an exclusive flock so no concurrent run's live staging dir
+    can be reaped.
+    """
+    if not output_dir.is_dir():
+        return
+    reaped = 0
+    for entry in output_dir.iterdir():
+        if not entry.name.startswith(STAGING_PREFIX):
+            continue
+        if entry.is_symlink():
+            # Stray symlink — remove the link only, never follow it.
+            try:
+                entry.unlink()
+                reaped += 1
+            except OSError as e:
+                log.warning("Could not unlink stale staging symlink %s: %s", entry, e)
+        elif entry.is_dir():
+            shutil.rmtree(entry, ignore_errors=True)
+            reaped += 1
+        # Regular files matching the prefix are intentionally left alone.
+    if reaped:
+        log.info("Reaped %d leftover staging entries from prior runs", reaped)
 
 
 # --- ffprobe / ffmpeg ---
@@ -205,10 +374,20 @@ def extract_smart_thumbnail(mkv_path, thumb_path, duration):
 
 
 def copy_cover(dvd_dir, covers_dir, dvd_name):
-    """Copy DVD cover JPG to covers directory. Returns relative path or empty string."""
+    """Copy DVD cover JPG to covers directory. Returns relative path or empty string.
+
+    Breaks any pre-existing staging symlink at cover_dst before the copy.
+    copy_served_to_staging may have placed an absolute symlink into served
+    there; shutil.copy2 follows symlinks on the destination and would
+    truncate the served file in place, bypassing the atomic publish
+    guarantee. Unlinking first removes the staging-side link; the served
+    file stays intact until publish replaces it via os.replace.
+    """
     cover_src = dvd_dir / f"{dvd_name}.jpg"
     if cover_src.exists():
         cover_dst = covers_dir / f"{dvd_name}.jpg"
+        if cover_dst.is_symlink() or cover_dst.exists():
+            cover_dst.unlink()
         shutil.copy2(cover_src, cover_dst)
         return f"covers/{dvd_name}.jpg"
     return ""
@@ -230,6 +409,16 @@ def process_one_title(args):
 
     if should_skip(mkv_path, mp4_path):
         return {"status": "skipped_existing", "mp4_path": mp4_path, "thumb_path": thumb_path}
+
+    # Break any symlink from copy_served_to_staging before re-transcoding.
+    # ffmpeg's -y opens output files via open(O_WRONLY|O_CREAT|O_TRUNC),
+    # which follows symlinks and would truncate the served target on the
+    # other end. Unlinking removes only the staging-side symlink; the
+    # served file stays intact until publish replaces it with the new one.
+    if mp4_path.is_symlink() or mp4_path.exists():
+        mp4_path.unlink()
+    if thumb_path.is_symlink() or thumb_path.exists():
+        thumb_path.unlink()
 
     ok = transcode_one(mkv_path, mp4_path)
     if not ok:
@@ -300,24 +489,41 @@ def write_manifest_atomic(manifest, target_path):
 def publish_staging(staging_dir, output_dir):
     """Publish staged content to the output directory.
 
-    Copies videos, thumbs, covers, and manifest from staging into the
-    output directory. Uses the atomic manifest write as the commit point.
-    Works on both local filesystems and k8s PVC mounts.
+    Real files in staging (newly transcoded outputs) are moved with
+    os.replace — an atomic per-file rename on the same filesystem, no
+    bytes copied. Symlinks in staging are skipped: they were placed by
+    copy_served_to_staging to mark "unchanged from served, leave alone",
+    and replacing them would atomically clobber the served target with
+    the symlink itself. They get cleaned up when staging is rmtree'd.
+
+    Falls back to shutil.copy2 + unlink on EXDEV so this still works in
+    tests (and any caller) that places staging on a different mount.
+
+    The atomic manifest.json write at the end is the commit point.
     """
     staging_dir = Path(staging_dir)
     output_dir = Path(output_dir)
 
-    # Ensure output subdirectories exist
-    for subdir in ("videos", "thumbs", "covers"):
+    for subdir in CONTENT_SUBDIRS:
         (output_dir / subdir).mkdir(parents=True, exist_ok=True)
 
-    # Copy assets from staging to output (skip manifest for now)
-    for subdir in ("videos", "thumbs", "covers"):
+    for subdir in CONTENT_SUBDIRS:
         src = staging_dir / subdir
+        if not src.is_dir():
+            continue
         dst = output_dir / subdir
         for f in src.iterdir():
-            if f.is_file():
-                shutil.copy2(f, dst / f.name)
+            if f.is_symlink() or not f.is_file():
+                continue
+            target = dst / f.name
+            try:
+                os.replace(f, target)
+            except OSError as e:
+                if e.errno == errno.EXDEV:
+                    shutil.copy2(f, target)
+                    f.unlink()
+                else:
+                    raise
 
     # Atomic manifest write is the publish signal
     manifest_src = staging_dir / "manifest.json"
@@ -335,39 +541,106 @@ def publish_staging(staging_dir, output_dir):
 
 
 def run_pipeline(input_dir, output_dir, overrides_path, schema_path, dry_run, min_duration, workers):
-    """Main pipeline logic, separated from argparse for testability."""
-    input_dir = Path(input_dir)
-    output_dir = Path(output_dir)
-    schema_path = Path(schema_path)
+    """Main pipeline logic, separated from argparse for testability.
 
-    # Pre-flight
-    if not dry_run and not check_disk_space(output_dir):
+    Holds an exclusive advisory flock on output_dir/.transcode.lock for
+    the entire run, so the reaper, staging setup, transcodes, and publish
+    are guaranteed single-writer even if a stray operator launches a
+    second pipeline or k8s retries the Job before the prior pod's exit
+    has been observed. Returns 2 if the lock is already held or the
+    lock file cannot be opened.
+    """
+    cfg = PipelineConfig(
+        input_dir=Path(input_dir),
+        output_dir=Path(output_dir),
+        overrides_path=overrides_path,
+        schema_path=Path(schema_path),
+        dry_run=dry_run,
+        min_duration=min_duration,
+        workers=workers,
+    )
+
+    # Pre-flight that doesn't need the lock
+    if not cfg.input_dir.is_dir():
+        log.error("Input directory does not exist: %s", cfg.input_dir)
+        return 1
+    if not cfg.dry_run and not check_disk_space(cfg.output_dir):
         return 1
 
     # Load overrides
     overrides = {}
-    if overrides_path and Path(overrides_path).exists():
-        with open(overrides_path) as f:
+    if cfg.overrides_path and Path(cfg.overrides_path).exists():
+        with open(cfg.overrides_path) as f:
             overrides = json.load(f)
         log.info("Loaded %d overrides", len(overrides))
-    elif overrides_path:
-        log.warning("Overrides file not found: %s", overrides_path)
+    elif cfg.overrides_path:
+        log.warning("Overrides file not found: %s", cfg.overrides_path)
 
-    # Set up staging (unique dir to avoid clobbering concurrent runs)
-    staging_base = Path(tempfile.mkdtemp(
-        dir=str(output_dir.parent),
-        prefix="staging-",
-    ))
-    prepare_staging(staging_base)
+    cfg.output_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = cfg.output_dir / LOCK_FILENAME
 
-    # Copy existing served content to staging (preserves previously transcoded files)
-    if output_dir.exists() and output_dir.is_dir():
-        copy_served_to_staging(output_dir, staging_base)
+    # Acquire the single-writer lock. The narrow except scope here is
+    # deliberate: only exceptions from the lock acquisition itself are
+    # reported as lock errors. Exceptions from mkdtemp, the reaper, or
+    # the transcode body propagate normally so operators see the real
+    # cause instead of a misleading "Could not open lock file" message.
+    lock_cm = _exclusive_lock(lock_path)
+    try:
+        lock_cm.__enter__()
+    except BlockingIOError:
+        log.error("Another transcode pipeline already holds %s — aborting", lock_path)
+        return 2
+    except OSError as e:
+        log.error("Could not open lock file %s: %s", lock_path, e)
+        return 2
 
-    # Walk DVD directories
-    if not input_dir.is_dir():
-        log.error("Input directory does not exist: %s", input_dir)
-        return 1
+    # Lock held from here. Everything below runs under try/finally so
+    # both the staging dir and the lock are released on every exit path
+    # (normal return, early return, raised exception).
+    try:
+        staging_base = None
+        try:
+            # Reap leftover staging dirs from prior crashed runs (safe under lock).
+            reap_stale_staging(cfg.output_dir)
+
+            # Set up staging *inside* output_dir so it shares the served
+            # filesystem. That lets copy_served_to_staging symlink existing
+            # content (cheap on CephFS, unlike hardlinks) and publish_staging
+            # use os.replace (atomic per-file rename, no bytes copied). The
+            # leading dot keeps the dir invisible to nginx, which only aliases
+            # /videos/, /thumbs/, /covers/.
+            staging_base = Path(tempfile.mkdtemp(
+                dir=str(cfg.output_dir),
+                prefix=STAGING_PREFIX,
+            ))
+            prepare_staging(staging_base)
+
+            # output_dir was just mkdir'd above, so it definitely exists.
+            # copy_served_to_staging has its own internal guard for
+            # empty/missing content subdirs.
+            copy_served_to_staging(cfg.output_dir, staging_base)
+
+            return _run_pipeline_body(cfg, staging_base, overrides)
+        finally:
+            if staging_base is not None:
+                shutil.rmtree(staging_base, ignore_errors=True)
+    finally:
+        lock_cm.__exit__(None, None, None)
+
+
+def _run_pipeline_body(cfg, staging_base, overrides):
+    """Inner body of run_pipeline. Assumes the lock is held and staging is set up.
+
+    Split out so run_pipeline can keep the flock + reaper + staging
+    cleanup logic at one indentation level and the transcode work itself
+    at another. Returns the same exit code as run_pipeline.
+    """
+    input_dir = cfg.input_dir
+    output_dir = cfg.output_dir
+    schema_path = cfg.schema_path
+    dry_run = cfg.dry_run
+    min_duration = cfg.min_duration
+    workers = cfg.workers
 
     dvd_dirs = sorted(
         d for d in input_dir.iterdir()
@@ -376,6 +649,8 @@ def run_pipeline(input_dir, output_dir, overrides_path, schema_path, dry_run, mi
 
     if not dvd_dirs:
         log.warning("No DVD directories found in %s", input_dir)
+    else:
+        log.info("Found %d DVD directories in %s", len(dvd_dirs), input_dir)
 
     # Collect work items
     work_items = []
@@ -444,23 +719,30 @@ def run_pipeline(input_dir, output_dir, overrides_path, schema_path, dry_run, mi
             log.info("  %s: %s", entry["id"], entry["title"])
     else:
         max_workers = workers or int(os.environ.get("WORKERS", os.cpu_count() or 4))
-        log.info("Transcoding %d titles with %d workers", len(work_items), max_workers)
+        total = len(work_items)
+        log.info("Transcoding %d titles with %d workers", total, max_workers)
 
         with ProcessPoolExecutor(max_workers=max_workers) as pool:
             futures = [pool.submit(process_one_title, item) for item in work_items]
+            done = 0
             for future in as_completed(futures):
+                done += 1
                 try:
                     result = future.result()
                     if result is None:
                         counters["errors"] += 1
+                        log.warning("[%d/%d] error (no result)", done, total)
                     elif result["status"] == "transcoded":
                         counters["processed"] += 1
+                        log.info("[%d/%d] transcoded %s", done, total, result["mp4_path"].name)
                     elif result["status"] == "skipped_existing":
                         counters["skipped_existing"] += 1
+                        log.info("[%d/%d] skipped (up to date) %s", done, total, result["mp4_path"].name)
                     elif result["status"] == "error":
                         counters["errors"] += 1
+                        log.warning("[%d/%d] FAILED %s", done, total, result["mp4_path"].name)
                 except Exception as e:
-                    log.error("Worker error: %s", e)
+                    log.error("[%d/%d] worker error: %s", done, total, e)
                     counters["errors"] += 1
 
     # Filter out entries whose mp4 doesn't exist (errors)
@@ -474,12 +756,14 @@ def run_pipeline(input_dir, output_dir, overrides_path, schema_path, dry_run, mi
     manifest = build_manifest(video_entries, staging_base)
 
     if not dry_run:
+        log.info("Validating manifest (%d entries)", len(video_entries))
         validate_manifest(manifest, schema_path)
         write_manifest_atomic(manifest, staging_base / "manifest.json")
+        log.info("Publishing staged content to %s", output_dir)
         publish_staging(staging_base, output_dir)
         log.info("Published to %s", output_dir)
-        # Clean up staging
-        shutil.rmtree(staging_base, ignore_errors=True)
+    # Note: staging cleanup is handled by run_pipeline's finally block,
+    # so dry-run, error paths, and exceptions all get the same cleanup.
 
     # Summary
     print_summary(

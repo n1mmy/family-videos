@@ -7,6 +7,7 @@ validated manifest.json, and atomically publishes via symlink swap.
 """
 
 import argparse
+import errno
 import json
 import logging
 import os
@@ -37,15 +38,23 @@ log = logging.getLogger("transcode")
 
 
 def check_disk_space(served_dir):
-    """Pre-flight: verify available disk space >= 2x served directory size."""
+    """Pre-flight: verify served filesystem has headroom for new transcodes.
+
+    Staging now lives inside served_dir and symlinks existing files into
+    place, so the published tree doesn't temporarily double in size. We
+    just need enough free space to write whatever new MP4s this run
+    produces. We can't cheaply predict that, so require 10% of current
+    served size as headroom (with a 1 GiB floor for empty/new served dirs).
+    """
     if not served_dir.exists():
         return True
     served_size = sum(f.stat().st_size for f in served_dir.rglob("*") if f.is_file())
     usage = shutil.disk_usage(served_dir)
-    needed = served_size * 2
+    needed = max(served_size // 10, 1024 * 1024 * 1024)
     if usage.free < needed:
         log.error(
-            "Insufficient disk space: need %d MB, have %d MB",
+            "Insufficient disk space on %s: need %d MB headroom, have %d MB free",
+            served_dir,
             needed // (1024 * 1024),
             usage.free // (1024 * 1024),
         )
@@ -57,12 +66,39 @@ def check_disk_space(served_dir):
 
 
 def copy_served_to_staging(served_dir, staging_dir):
-    """Copy existing served content to staging for idempotent updates."""
-    # Resolve symlink to get the real directory
-    real_served = served_dir.resolve() if served_dir.is_symlink() else served_dir
-    if real_served.is_dir():
-        shutil.copytree(real_served, staging_dir, dirs_exist_ok=True)
-        log.info("Copied existing served content to staging")
+    """Symlink existing served content into staging for idempotent updates.
+
+    Uses absolute symlinks instead of full copies — staging now lives on
+    the same filesystem as served, and CephFS handles symlinks much more
+    cheaply than hardlinks (which incur per-link MDS bookkeeping). Only
+    the three known content subdirs are linked, which avoids any risk of
+    recursing into the staging dir itself or other unexpected siblings
+    (e.g., .healthz, prior staging dirs).
+
+    publish_staging will skip these symlinks at publish time — the served
+    target is already where it needs to be. Re-transcodes break the link
+    safely because process_one_title unlinks the symlink before invoking
+    ffmpeg, so the served target is never opened with O_TRUNC.
+    """
+    real_served = served_dir.resolve()
+    if not real_served.is_dir():
+        return
+    count = 0
+    for subdir in ("videos", "thumbs", "covers"):
+        src_dir = real_served / subdir
+        if not src_dir.is_dir():
+            continue
+        dst_dir = staging_dir / subdir
+        dst_dir.mkdir(parents=True, exist_ok=True)
+        for f in src_dir.iterdir():
+            if not f.is_file() or f.is_symlink():
+                continue
+            dst = dst_dir / f.name
+            if dst.exists() or dst.is_symlink():
+                dst.unlink()
+            os.symlink(f.resolve(), dst)
+            count += 1
+    log.info("Symlinked %d existing files into staging", count)
 
 
 def prepare_staging(staging_dir):
@@ -231,6 +267,16 @@ def process_one_title(args):
     if should_skip(mkv_path, mp4_path):
         return {"status": "skipped_existing", "mp4_path": mp4_path, "thumb_path": thumb_path}
 
+    # Break any symlink from copy_served_to_staging before re-transcoding.
+    # ffmpeg's -y opens output files via open(O_WRONLY|O_CREAT|O_TRUNC),
+    # which follows symlinks and would truncate the served target on the
+    # other end. Unlinking removes only the staging-side symlink; the
+    # served file stays intact until publish replaces it with the new one.
+    if mp4_path.is_symlink() or mp4_path.exists():
+        mp4_path.unlink()
+    if thumb_path.is_symlink() or thumb_path.exists():
+        thumb_path.unlink()
+
     ok = transcode_one(mkv_path, mp4_path)
     if not ok:
         return {"status": "error", "mp4_path": mp4_path}
@@ -300,24 +346,41 @@ def write_manifest_atomic(manifest, target_path):
 def publish_staging(staging_dir, output_dir):
     """Publish staged content to the output directory.
 
-    Copies videos, thumbs, covers, and manifest from staging into the
-    output directory. Uses the atomic manifest write as the commit point.
-    Works on both local filesystems and k8s PVC mounts.
+    Real files in staging (newly transcoded outputs) are moved with
+    os.replace — an atomic per-file rename on the same filesystem, no
+    bytes copied. Symlinks in staging are skipped: they were placed by
+    copy_served_to_staging to mark "unchanged from served, leave alone",
+    and replacing them would atomically clobber the served target with
+    the symlink itself. They get cleaned up when staging is rmtree'd.
+
+    Falls back to shutil.copy2 + unlink on EXDEV so this still works in
+    tests (and any caller) that places staging on a different mount.
+
+    The atomic manifest.json write at the end is the commit point.
     """
     staging_dir = Path(staging_dir)
     output_dir = Path(output_dir)
 
-    # Ensure output subdirectories exist
     for subdir in ("videos", "thumbs", "covers"):
         (output_dir / subdir).mkdir(parents=True, exist_ok=True)
 
-    # Copy assets from staging to output (skip manifest for now)
     for subdir in ("videos", "thumbs", "covers"):
         src = staging_dir / subdir
+        if not src.is_dir():
+            continue
         dst = output_dir / subdir
         for f in src.iterdir():
-            if f.is_file():
-                shutil.copy2(f, dst / f.name)
+            if f.is_symlink() or not f.is_file():
+                continue
+            target = dst / f.name
+            try:
+                os.replace(f, target)
+            except OSError as e:
+                if e.errno == errno.EXDEV:
+                    shutil.copy2(f, target)
+                    f.unlink()
+                else:
+                    raise
 
     # Atomic manifest write is the publish signal
     manifest_src = staging_dir / "manifest.json"
@@ -353,10 +416,15 @@ def run_pipeline(input_dir, output_dir, overrides_path, schema_path, dry_run, mi
     elif overrides_path:
         log.warning("Overrides file not found: %s", overrides_path)
 
-    # Set up staging (unique dir to avoid clobbering concurrent runs)
+    # Set up staging *inside* output_dir so it shares the served filesystem.
+    # That lets copy_served_to_staging symlink existing content (cheap on
+    # CephFS, unlike hardlinks) and publish_staging use os.replace (atomic
+    # per-file rename, no bytes copied). The leading dot keeps the dir
+    # invisible to nginx, which only aliases /videos/, /thumbs/, /covers/.
+    output_dir.mkdir(parents=True, exist_ok=True)
     staging_base = Path(tempfile.mkdtemp(
-        dir=str(output_dir.parent),
-        prefix="staging-",
+        dir=str(output_dir),
+        prefix=".staging-",
     ))
     prepare_staging(staging_base)
 

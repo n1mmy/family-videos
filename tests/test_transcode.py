@@ -9,8 +9,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 from transcode import (
     copy_cover,
+    copy_served_to_staging,
     extract_smart_thumbnail,
     get_duration,
+    process_one_title,
     publish_staging,
     run_pipeline,
     should_skip,
@@ -359,6 +361,141 @@ class TestPublishStaging:
         publish_staging(staging, output)
         assert (output / "videos" / "new.mp4").exists()
         assert (output / "videos" / "old.mp4").exists()
+
+    def test_retranscode_breaks_symlink_without_truncating_served(self, tmp_path):
+        """When the staging entry is a symlink to a served file and the source
+        MKV is newer (so we re-transcode), process_one_title must unlink the
+        symlink before any ffmpeg invocation. Otherwise ffmpeg's O_TRUNC would
+        follow the symlink and zero out the real served file."""
+        served = tmp_path / "served"
+        (served / "videos").mkdir(parents=True)
+        (served / "thumbs").mkdir()
+
+        served_mp4 = served / "videos" / "foo.mp4"
+        served_thumb = served / "thumbs" / "foo.jpg"
+        original_mp4 = b"original served mp4 bytes"
+        original_thumb = b"original served thumb bytes"
+        served_mp4.write_bytes(original_mp4)
+        served_thumb.write_bytes(original_thumb)
+
+        staging = served / ".staging-test"
+        (staging / "videos").mkdir(parents=True)
+        (staging / "thumbs").mkdir()
+        staging_mp4 = staging / "videos" / "foo.mp4"
+        staging_thumb = staging / "thumbs" / "foo.jpg"
+        os.symlink(served_mp4.resolve(), staging_mp4)
+        os.symlink(served_thumb.resolve(), staging_thumb)
+
+        # Source MKV is newer than the served files, so should_skip is False
+        # and process_one_title will fall through to the transcode path.
+        mkv = tmp_path / "source.mkv"
+        mkv.write_bytes(b"\x00" * 100)
+        os.utime(mkv, (time.time() + 10, time.time() + 10))
+
+        # Stub ffmpeg: write a fresh, distinct payload to whatever path it's
+        # given. If the symlink wasn't unlinked first, this would follow the
+        # link and corrupt the served file.
+        new_mp4 = b"freshly transcoded bytes"
+        new_thumb = b"freshly extracted thumb"
+
+        def mock_run(cmd, **kwargs):
+            result = MagicMock(returncode=0, stderr="", stdout=b"")
+            if cmd[0] == "ffmpeg":
+                # Find the output path (last positional arg).
+                out = Path(cmd[-1])
+                if out.suffix == ".mp4":
+                    out.write_bytes(new_mp4)
+                elif out.suffix == ".jpg":
+                    out.write_bytes(new_thumb)
+            return result
+
+        with patch("transcode.subprocess.run", side_effect=mock_run):
+            result = process_one_title((mkv, staging_mp4, staging_thumb, 120.0, False))
+
+        assert result["status"] == "transcoded"
+
+        # Served files must still hold their ORIGINAL bytes — not corrupted,
+        # not zero-length, not the new transcode payload.
+        assert served_mp4.read_bytes() == original_mp4
+        assert served_thumb.read_bytes() == original_thumb
+
+        # Staging now holds fresh, real (non-symlink) files with the new bytes.
+        assert not staging_mp4.is_symlink()
+        assert not staging_thumb.is_symlink()
+        assert staging_mp4.read_bytes() == new_mp4
+        assert staging_thumb.read_bytes() == new_thumb
+
+    def test_skips_symlinked_staging_entries(self, tmp_path):
+        """Symlinks in staging (placed by copy_served_to_staging for unchanged
+        files) must NOT be replaced into served — that would clobber the real
+        served file with the symlink itself. The original served bytes must
+        remain intact, and the staging symlink stays put for rmtree."""
+        served = tmp_path / "served"
+        (served / "videos").mkdir(parents=True)
+        (served / "thumbs").mkdir()
+        (served / "covers").mkdir()
+        original_bytes = b"original served content"
+        served_file = served / "videos" / "unchanged.mp4"
+        served_file.write_bytes(original_bytes)
+
+        staging = served / ".staging-test"
+        (staging / "videos").mkdir(parents=True)
+        (staging / "thumbs").mkdir()
+        (staging / "covers").mkdir()
+        # Stage the unchanged file as a symlink, just like copy_served_to_staging does.
+        os.symlink(served_file.resolve(), staging / "videos" / "unchanged.mp4")
+
+        publish_staging(staging, served)
+
+        # Served file is still a regular file with its original bytes.
+        assert served_file.is_file()
+        assert not served_file.is_symlink()
+        assert served_file.read_bytes() == original_bytes
+
+
+# --- copy_served_to_staging ---
+
+
+class TestCopyServedToStaging:
+    def test_creates_absolute_symlinks(self, tmp_path):
+        served = tmp_path / "served"
+        (served / "videos").mkdir(parents=True)
+        (served / "thumbs").mkdir()
+        (served / "covers").mkdir()
+        (served / "videos" / "a.mp4").write_bytes(b"video bytes")
+        (served / "thumbs" / "a.jpg").write_bytes(b"thumb bytes")
+        (served / "covers" / "dvd.jpg").write_bytes(b"cover bytes")
+
+        staging = served / ".staging-test"
+        staging.mkdir()
+        copy_served_to_staging(served, staging)
+
+        for rel in ("videos/a.mp4", "thumbs/a.jpg", "covers/dvd.jpg"):
+            link = staging / rel
+            assert link.is_symlink(), f"{rel} should be a symlink"
+            target = os.readlink(link)
+            assert os.path.isabs(target), f"{rel} target {target!r} is not absolute"
+            assert link.read_bytes() == (served / rel).read_bytes()
+
+    def test_skips_unrelated_siblings(self, tmp_path):
+        """Should not recurse into sibling .staging-* dirs or stray files."""
+        served = tmp_path / "served"
+        (served / "videos").mkdir(parents=True)
+        (served / "videos" / "real.mp4").write_bytes(b"x")
+        # A leftover staging dir from a prior failed run.
+        (served / ".staging-old").mkdir()
+        (served / ".staging-old" / "junk").write_bytes(b"y")
+        # Health marker.
+        (served / ".healthz").write_text("ok\n")
+
+        staging = served / ".staging-new"
+        staging.mkdir()
+        copy_served_to_staging(served, staging)
+
+        # Only the videos subdir contents were touched.
+        assert (staging / "videos" / "real.mp4").is_symlink()
+        assert not (staging / ".staging-old").exists()
+        assert not (staging / ".healthz").exists()
 
 
 # --- Cover copy ---

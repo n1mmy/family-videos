@@ -376,6 +376,8 @@ def run_pipeline(input_dir, output_dir, overrides_path, schema_path, dry_run, mi
 
     if not dvd_dirs:
         log.warning("No DVD directories found in %s", input_dir)
+    else:
+        log.info("Found %d DVD directories in %s", len(dvd_dirs), input_dir)
 
     # Collect work items
     work_items = []
@@ -444,23 +446,30 @@ def run_pipeline(input_dir, output_dir, overrides_path, schema_path, dry_run, mi
             log.info("  %s: %s", entry["id"], entry["title"])
     else:
         max_workers = workers or int(os.environ.get("WORKERS", os.cpu_count() or 4))
-        log.info("Transcoding %d titles with %d workers", len(work_items), max_workers)
+        total = len(work_items)
+        log.info("Transcoding %d titles with %d workers", total, max_workers)
 
         with ProcessPoolExecutor(max_workers=max_workers) as pool:
             futures = [pool.submit(process_one_title, item) for item in work_items]
+            done = 0
             for future in as_completed(futures):
+                done += 1
                 try:
                     result = future.result()
                     if result is None:
                         counters["errors"] += 1
+                        log.warning("[%d/%d] error (no result)", done, total)
                     elif result["status"] == "transcoded":
                         counters["processed"] += 1
+                        log.info("[%d/%d] transcoded %s", done, total, result["mp4_path"].name)
                     elif result["status"] == "skipped_existing":
                         counters["skipped_existing"] += 1
+                        log.info("[%d/%d] skipped (up to date) %s", done, total, result["mp4_path"].name)
                     elif result["status"] == "error":
                         counters["errors"] += 1
+                        log.warning("[%d/%d] FAILED %s", done, total, result["mp4_path"].name)
                 except Exception as e:
-                    log.error("Worker error: %s", e)
+                    log.error("[%d/%d] worker error: %s", done, total, e)
                     counters["errors"] += 1
 
     # Filter out entries whose mp4 doesn't exist (errors)
@@ -474,8 +483,10 @@ def run_pipeline(input_dir, output_dir, overrides_path, schema_path, dry_run, mi
     manifest = build_manifest(video_entries, staging_base)
 
     if not dry_run:
+        log.info("Validating manifest (%d entries)", len(video_entries))
         validate_manifest(manifest, schema_path)
         write_manifest_atomic(manifest, staging_base / "manifest.json")
+        log.info("Publishing staged content to %s", output_dir)
         publish_staging(staging_base, output_dir)
         log.info("Published to %s", output_dir)
         # Clean up staging

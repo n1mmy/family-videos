@@ -239,6 +239,17 @@ class TestManifest:
         json_files = list(tmp_path.glob("*.json"))
         assert len(json_files) == 1
 
+    def test_published_manifest_is_0o644(self, tmp_path):
+        # Regression: mkstemp creates 0o600, which makes the published
+        # manifest unreadable to nginx when the pipeline runs as root in
+        # staging. The published file must be exactly 0o644 — readable
+        # by group and other, writable only by owner.
+        manifest = {"title": "Test", "dateRange": {"start": "2000", "end": "2005"}, "videos": []}
+        target = tmp_path / "manifest.json"
+        write_manifest_atomic(manifest, target)
+        mode = target.stat().st_mode & 0o777
+        assert mode == 0o644, f"manifest mode {oct(mode)} is not 0o644"
+
     def test_validates_against_schema(self, schema_path):
         manifest = {
             "title": "Family Videos",
@@ -348,6 +359,28 @@ class TestPublishStaging:
         assert (output / "videos" / "test.mp4").exists()
         assert (output / "thumbs" / "test.jpg").exists()
         assert (output / "manifest.json").exists()
+
+    def test_published_manifest_is_world_readable_after_publish(self, tmp_path):
+        # End-to-end regression: even when the staging-side manifest was
+        # written with mode 0o600 (e.g. by an older mkstemp call), the
+        # manifest published to output_dir must be 0o644 so nginx can
+        # read it. Exercises the full publish_staging path.
+        staging = tmp_path / "staging"
+        (staging / "videos").mkdir(parents=True)
+        (staging / "thumbs").mkdir()
+        (staging / "covers").mkdir()
+        staging_manifest = staging / "manifest.json"
+        staging_manifest.write_text('{"title":"Test","dateRange":{"start":null,"end":null},"videos":[]}')
+        os.chmod(staging_manifest, 0o600)  # simulate the old buggy mode
+
+        output = tmp_path / "served"
+        output.mkdir()
+        publish_staging(staging, output)
+
+        published = output / "manifest.json"
+        assert published.exists()
+        mode = published.stat().st_mode & 0o777
+        assert mode == 0o644, f"published manifest mode {oct(mode)} is not 0o644"
 
     def test_works_on_existing_output_dir(self, tmp_path):
         """Publishing to an existing dir with content should not fail."""

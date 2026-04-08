@@ -20,7 +20,10 @@ import subprocess
 import sys
 import tempfile
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 from parse import (
     compute_file_hash,
@@ -42,6 +45,30 @@ log = logging.getLogger("transcode")
 # the root of served (.healthz, .staging-*, etc.) is bookkeeping that the
 # pipeline owns but does not publish via the manifest.
 CONTENT_SUBDIRS = ("videos", "thumbs", "covers")
+
+# Hidden bookkeeping files at the root of served. STAGING_PREFIX is
+# shared between mkdtemp (creates) and reap_stale_staging (reaps), so
+# they cannot drift. LOCK_FILENAME is the single-writer advisory lock.
+STAGING_PREFIX = ".staging-"
+LOCK_FILENAME = ".transcode.lock"
+
+
+@dataclass(frozen=True)
+class PipelineConfig:
+    """Frozen configuration for one pipeline run.
+
+    Replaces an 8-positional-arg call between run_pipeline and
+    _run_pipeline_body so parameter order can't drift between caller
+    and callee. All paths are Path objects (not str) so consumers
+    don't have to keep coercing.
+    """
+    input_dir: Path
+    output_dir: Path
+    overrides_path: Optional[str]
+    schema_path: Path
+    dry_run: bool
+    min_duration: int
+    workers: Optional[int]
 
 
 # --- Disk space ---
@@ -67,7 +94,11 @@ def check_disk_space(served_dir):
         d = served_dir / subdir
         if not d.is_dir():
             continue
-        for f in d.iterdir():
+        # rglob (not iterdir) so we keep counting if any CONTENT_SUBDIR
+        # ever grows a nested layout (e.g. videos/<dvd>/title.mp4). The
+        # leftover-staging exclusion is enforced by only iterating known
+        # subdirs at the top level, so recursion under them is safe.
+        for f in d.rglob("*"):
             if f.is_file() and not f.is_symlink():
                 served_size += f.stat().st_size
     usage = shutil.disk_usage(served_dir)
@@ -132,25 +163,68 @@ def prepare_staging(staging_dir):
         (staging_dir / subdir).mkdir(exist_ok=True)
 
 
+@contextmanager
+def _exclusive_lock(lock_path):
+    """Acquire an exclusive non-blocking advisory flock on `lock_path`.
+
+    Yields once with the lock held, releases on exit (including on
+    exception). The lock fd is created with O_CLOEXEC so it doesn't
+    leak into ProcessPoolExecutor workers, and O_NOFOLLOW so a
+    pre-planted symlink at the lock path is rejected with ELOOP.
+
+    Raises BlockingIOError if another process already holds the lock.
+    Other OSErrors from open or flock propagate to the caller.
+    """
+    fd = os.open(
+        str(lock_path),
+        os.O_CREAT | os.O_WRONLY | os.O_CLOEXEC | os.O_NOFOLLOW,
+        0o600,
+    )
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        yield
+    finally:
+        # Closing the fd releases the flock; no explicit LOCK_UN needed.
+        os.close(fd)
+
+
 def reap_stale_staging(output_dir):
-    """Remove leftover .staging-* dirs from prior crashed runs.
+    """Remove leftover .staging-* entries from prior crashed runs.
 
     With staging now living inside output_dir on the persistent CephFS PVC
     (rather than the container's ephemeral root), crash residue is no
-    longer wiped on pod restart. This reaper rmtrees any sibling .staging-*
-    found at the root of output_dir before a new run begins. Safe because
-    nginx only aliases CONTENT_SUBDIRS, and run_pipeline holds an
-    exclusive flock so no concurrent run's live staging dir can be reaped.
+    longer wiped on pod restart. This reaper removes any sibling
+    .staging-* found at the root of output_dir before a new run begins.
+
+    Symlinks are handled explicitly: a stray .staging-* symlink is just
+    unlinked (not followed), so a misconfigured operator-planted symlink
+    can never escalate to deleting its target. Real .staging-* dirs are
+    rmtree'd. Regular files matching the prefix are skipped (they
+    shouldn't exist, but defensively we don't touch them).
+
+    Safe because nginx only aliases CONTENT_SUBDIRS, and run_pipeline
+    holds an exclusive flock so no concurrent run's live staging dir
+    can be reaped.
     """
     if not output_dir.is_dir():
         return
     reaped = 0
     for entry in output_dir.iterdir():
-        if entry.is_dir() and entry.name.startswith(".staging-"):
+        if not entry.name.startswith(STAGING_PREFIX):
+            continue
+        if entry.is_symlink():
+            # Stray symlink — remove the link only, never follow it.
+            try:
+                entry.unlink()
+                reaped += 1
+            except OSError as e:
+                log.warning("Could not unlink stale staging symlink %s: %s", entry, e)
+        elif entry.is_dir():
             shutil.rmtree(entry, ignore_errors=True)
             reaped += 1
+        # Regular files matching the prefix are intentionally left alone.
     if reaped:
-        log.info("Reaped %d leftover staging dirs from prior runs", reaped)
+        log.info("Reaped %d leftover staging entries from prior runs", reaped)
 
 
 # --- ffprobe / ffmpeg ---
@@ -449,83 +523,92 @@ def run_pipeline(input_dir, output_dir, overrides_path, schema_path, dry_run, mi
     the entire run, so the reaper, staging setup, transcodes, and publish
     are guaranteed single-writer even if a stray operator launches a
     second pipeline or k8s retries the Job before the prior pod's exit
-    has been observed. Returns 2 if the lock is already held.
+    has been observed. Returns 2 if the lock is already held or the
+    lock file cannot be opened.
     """
-    input_dir = Path(input_dir)
-    output_dir = Path(output_dir)
-    schema_path = Path(schema_path)
+    cfg = PipelineConfig(
+        input_dir=Path(input_dir),
+        output_dir=Path(output_dir),
+        overrides_path=overrides_path,
+        schema_path=Path(schema_path),
+        dry_run=dry_run,
+        min_duration=min_duration,
+        workers=workers,
+    )
 
     # Pre-flight that doesn't need the lock
-    if not input_dir.is_dir():
-        log.error("Input directory does not exist: %s", input_dir)
+    if not cfg.input_dir.is_dir():
+        log.error("Input directory does not exist: %s", cfg.input_dir)
         return 1
-    if not dry_run and not check_disk_space(output_dir):
+    if not cfg.dry_run and not check_disk_space(cfg.output_dir):
         return 1
 
     # Load overrides
     overrides = {}
-    if overrides_path and Path(overrides_path).exists():
-        with open(overrides_path) as f:
+    if cfg.overrides_path and Path(cfg.overrides_path).exists():
+        with open(cfg.overrides_path) as f:
             overrides = json.load(f)
         log.info("Loaded %d overrides", len(overrides))
-    elif overrides_path:
-        log.warning("Overrides file not found: %s", overrides_path)
+    elif cfg.overrides_path:
+        log.warning("Overrides file not found: %s", cfg.overrides_path)
 
-    output_dir.mkdir(parents=True, exist_ok=True)
+    cfg.output_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = cfg.output_dir / LOCK_FILENAME
 
     # Single-writer lock. Held for the rest of run_pipeline so the reaper,
     # mkdtemp, transcodes, and publish are all guaranteed to be the only
-    # writers under output_dir. Released when the fd is closed in finally.
-    lock_path = output_dir / ".transcode.lock"
-    lock_fd = os.open(str(lock_path), os.O_CREAT | os.O_WRONLY, 0o600)
+    # writers under output_dir. The contextmanager handles open + flock +
+    # release on every exit path including exceptions.
     try:
-        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
+        with _exclusive_lock(lock_path):
+            staging_base = None
+            try:
+                # Reap leftover staging dirs from prior crashed runs (safe under lock).
+                reap_stale_staging(cfg.output_dir)
+
+                # Set up staging *inside* output_dir so it shares the served
+                # filesystem. That lets copy_served_to_staging symlink existing
+                # content (cheap on CephFS, unlike hardlinks) and publish_staging
+                # use os.replace (atomic per-file rename, no bytes copied). The
+                # leading dot keeps the dir invisible to nginx, which only aliases
+                # /videos/, /thumbs/, /covers/.
+                staging_base = Path(tempfile.mkdtemp(
+                    dir=str(cfg.output_dir),
+                    prefix=STAGING_PREFIX,
+                ))
+                prepare_staging(staging_base)
+
+                # output_dir was just mkdir'd above, so it definitely exists.
+                # copy_served_to_staging has its own internal guard for
+                # empty/missing content subdirs.
+                copy_served_to_staging(cfg.output_dir, staging_base)
+
+                return _run_pipeline_body(cfg, staging_base, overrides)
+            finally:
+                if staging_base is not None:
+                    shutil.rmtree(staging_base, ignore_errors=True)
+    except BlockingIOError:
         log.error("Another transcode pipeline already holds %s — aborting", lock_path)
-        os.close(lock_fd)
+        return 2
+    except OSError as e:
+        log.error("Could not open lock file %s: %s", lock_path, e)
         return 2
 
-    staging_base = None
-    try:
-        # Reap leftover staging dirs from prior crashed runs (safe under lock).
-        reap_stale_staging(output_dir)
 
-        # Set up staging *inside* output_dir so it shares the served
-        # filesystem. That lets copy_served_to_staging symlink existing
-        # content (cheap on CephFS, unlike hardlinks) and publish_staging
-        # use os.replace (atomic per-file rename, no bytes copied). The
-        # leading dot keeps the dir invisible to nginx, which only aliases
-        # /videos/, /thumbs/, /covers/.
-        staging_base = Path(tempfile.mkdtemp(
-            dir=str(output_dir),
-            prefix=".staging-",
-        ))
-        prepare_staging(staging_base)
-
-        # Copy existing served content to staging (preserves previously transcoded files)
-        if output_dir.exists() and output_dir.is_dir():
-            copy_served_to_staging(output_dir, staging_base)
-
-        return _run_pipeline_body(
-            input_dir, output_dir, staging_base, overrides,
-            schema_path, dry_run, min_duration, workers,
-        )
-    finally:
-        if staging_base is not None:
-            shutil.rmtree(staging_base, ignore_errors=True)
-        try:
-            fcntl.flock(lock_fd, fcntl.LOCK_UN)
-        finally:
-            os.close(lock_fd)
-
-
-def _run_pipeline_body(input_dir, output_dir, staging_base, overrides, schema_path, dry_run, min_duration, workers):
+def _run_pipeline_body(cfg, staging_base, overrides):
     """Inner body of run_pipeline. Assumes the lock is held and staging is set up.
 
     Split out so run_pipeline can keep the flock + reaper + staging
     cleanup logic at one indentation level and the transcode work itself
     at another. Returns the same exit code as run_pipeline.
     """
+    input_dir = cfg.input_dir
+    output_dir = cfg.output_dir
+    schema_path = cfg.schema_path
+    dry_run = cfg.dry_run
+    min_duration = cfg.min_duration
+    workers = cfg.workers
+
     dvd_dirs = sorted(
         d for d in input_dir.iterdir()
         if d.is_dir() and not d.name.startswith(".")

@@ -13,6 +13,7 @@ from transcode import (
     copy_served_to_staging,
     extract_smart_thumbnail,
     get_duration,
+    prepare_staging,
     process_one_title,
     publish_staging,
     reap_stale_staging,
@@ -615,6 +616,38 @@ class TestReapStaleStaging:
         assert real.exists()
         assert real.read_bytes() == b"important"
 
+    def test_top_level_staging_symlink_is_unlinked_not_followed(self, tmp_path):
+        """A top-level .staging-* SYMLINK pointing at an external dir must
+        be unlinked (the symlink itself), not followed into the target."""
+        served = tmp_path / "served"
+        served.mkdir()
+        external = tmp_path / "external"
+        external.mkdir()
+        (external / "precious.mp4").write_bytes(b"keep me")
+        os.symlink(external, served / ".staging-symlink-to-dir")
+
+        reap_stale_staging(served)
+
+        # Symlink itself is gone.
+        assert not (served / ".staging-symlink-to-dir").is_symlink()
+        # Target dir and its contents are untouched.
+        assert (external / "precious.mp4").exists()
+        assert (external / "precious.mp4").read_bytes() == b"keep me"
+
+    def test_top_level_staging_regular_file_is_left_alone(self, tmp_path):
+        """A regular file (not a dir, not a symlink) named .staging-foo
+        is unexpected but defensively skipped — we never delete files we
+        don't recognize."""
+        served = tmp_path / "served"
+        served.mkdir()
+        f = served / ".staging-not-a-dir"
+        f.write_text("hi")
+
+        reap_stale_staging(served)
+
+        assert f.exists()
+        assert f.read_text() == "hi"
+
 
 # --- publish_staging extra coverage (EXDEV + bytes verification) ---
 
@@ -765,6 +798,124 @@ class TestRunPipelineCleanup:
             )
         assert ret1 == 0
         assert ret2 == 0
+
+    def test_lock_open_failure_returns_2_with_log(self, tmp_output_dir, tmp_path, schema_path, caplog):
+        """If os.open on the lock file fails (e.g. EACCES on a read-only
+        mount), run_pipeline must return 2 with a clear error log instead
+        of propagating an unhandled OSError."""
+        import errno as _errno
+        served = tmp_path / "served"
+        real_open = os.open
+
+        def fake_open(path, *a, **kw):
+            if str(path).endswith(".transcode.lock"):
+                raise OSError(_errno.EACCES, "permission denied")
+            return real_open(path, *a, **kw)
+
+        def mock_run(cmd, **kwargs):
+            return MagicMock(returncode=0, stdout=json.dumps({"format": {"duration": "120.0"}}))
+
+        with patch("transcode.os.open", side_effect=fake_open), \
+             patch("transcode.subprocess.run", side_effect=mock_run), \
+             caplog.at_level("ERROR", logger="transcode"):
+            ret = run_pipeline(
+                str(tmp_output_dir), str(served),
+                None, str(schema_path),
+                dry_run=True, min_duration=60, workers=1,
+            )
+        assert ret == 2
+        assert any("Could not open lock file" in r.message for r in caplog.records)
+
+    def test_exception_in_body_releases_lock_and_cleans_staging(self, tmp_output_dir, tmp_path, schema_path):
+        """If something inside _run_pipeline_body raises, the try/finally
+        in run_pipeline must (a) rmtree the staging dir and (b) release
+        the lock so a subsequent run can proceed."""
+        import fcntl as _fcntl
+        served = tmp_path / "served"
+
+        def mock_run(cmd, **kwargs):
+            return MagicMock(returncode=0, stdout=json.dumps({"format": {"duration": "120.0"}}))
+
+        with patch("transcode.subprocess.run", side_effect=mock_run), \
+             patch("transcode.print_summary", side_effect=RuntimeError("boom")):
+            with pytest.raises(RuntimeError):
+                run_pipeline(
+                    str(tmp_output_dir), str(served),
+                    None, str(schema_path),
+                    dry_run=True, min_duration=60, workers=1,
+                )
+
+        # (a) staging dir was cleaned up despite the exception
+        leftovers = [p for p in served.iterdir() if p.name.startswith(".staging-")]
+        assert leftovers == [], f"exception leaked staging: {leftovers}"
+
+        # (b) lock is releasable — a fresh acquire from a new fd succeeds
+        fd = os.open(str(served / ".transcode.lock"),
+                     os.O_CREAT | os.O_WRONLY, 0o600)
+        try:
+            _fcntl.flock(fd, _fcntl.LOCK_EX | _fcntl.LOCK_NB)
+        finally:
+            os.close(fd)
+
+    def test_transcode_error_path_cleans_up_and_releases_lock(self, tmp_path, schema_path):
+        """When transcode_one fails (ffmpeg returns non-zero), _run_pipeline_body
+        returns 1 through finally — staging must still be cleaned and the
+        lock released."""
+        import fcntl as _fcntl
+        # Build a minimal input dir with one DVD + one MKV.
+        input_dir = tmp_path / "input"
+        dvd = input_dir / "DVD1"
+        dvd.mkdir(parents=True)
+        (dvd / "title00.mkv").write_bytes(b"\x00" * 100)
+
+        served = tmp_path / "served"
+
+        def mock_run(cmd, **kwargs):
+            r = MagicMock(stderr="", stdout=b"")
+            if cmd[0] == "ffprobe":
+                r.returncode = 0
+                r.stdout = json.dumps({"format": {"duration": "120.0"}})
+            elif cmd[0] == "ffmpeg":
+                # Force ffmpeg to fail.
+                r.returncode = 1
+                r.stderr = "fake ffmpeg failure"
+            return r
+
+        with patch("transcode.subprocess.run", side_effect=mock_run):
+            ret = run_pipeline(
+                str(input_dir), str(served),
+                None, str(schema_path),
+                dry_run=False, min_duration=60, workers=1,
+            )
+        assert ret == 1  # transcode error
+        leftovers = [p for p in served.iterdir() if p.name.startswith(".staging-")]
+        assert leftovers == [], f"error path leaked staging: {leftovers}"
+        # Lock is releasable.
+        fd = os.open(str(served / ".transcode.lock"),
+                     os.O_CREAT | os.O_WRONLY, 0o600)
+        try:
+            _fcntl.flock(fd, _fcntl.LOCK_EX | _fcntl.LOCK_NB)
+        finally:
+            os.close(fd)
+
+
+# --- prepare_staging idempotency ---
+
+
+class TestPrepareStaging:
+    def test_idempotent_on_pre_existing_populated_dir(self, tmp_path):
+        """prepare_staging now mkdirs the parent itself, so calling it
+        twice on the same path with content already in place must not
+        raise and must not destroy any existing files."""
+        staging = tmp_path / "staging"
+        staging.mkdir()
+        (staging / "videos").mkdir()
+        (staging / "videos" / "keep.mp4").write_bytes(b"k")
+        prepare_staging(staging)
+        prepare_staging(staging)
+        for sub in ("videos", "thumbs", "covers"):
+            assert (staging / sub).is_dir()
+        assert (staging / "videos" / "keep.mp4").read_bytes() == b"k"
 
 
 # --- Cover copy ---

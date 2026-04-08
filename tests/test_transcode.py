@@ -941,3 +941,38 @@ class TestCopyCover:
 
         result = copy_cover(dvd_dir, covers_dir, "my-dvd")
         assert result == ""
+
+    def test_breaks_symlink_before_copy(self, tmp_path):
+        """The covers_dir entry may be a symlink placed by copy_served_to_staging
+        that points at the existing served cover. copy_cover must unlink the
+        symlink before shutil.copy2 (which would otherwise follow the symlink
+        and truncate the served file in place, bypassing atomic publish)."""
+        # The "served" original file that must not be touched.
+        served_dir = tmp_path / "served" / "covers"
+        served_dir.mkdir(parents=True)
+        served_cover = served_dir / "my-dvd.jpg"
+        original_bytes = b"original served cover bytes"
+        served_cover.write_bytes(original_bytes)
+
+        # Staging covers dir with a symlink to the served original
+        # (this is what copy_served_to_staging produces).
+        staging_covers = tmp_path / ".staging-test" / "covers"
+        staging_covers.mkdir(parents=True)
+        os.symlink(served_cover.resolve(), staging_covers / "my-dvd.jpg")
+
+        # The NEW cover bytes coming from the fresh DVD rip.
+        dvd_dir = tmp_path / "dvd-source"
+        dvd_dir.mkdir()
+        new_bytes = b"new cover from this run"
+        (dvd_dir / "my-dvd.jpg").write_bytes(new_bytes)
+
+        result = copy_cover(dvd_dir, staging_covers, "my-dvd")
+
+        assert result == "covers/my-dvd.jpg"
+        # Staging entry is now a real file with the NEW bytes.
+        staging_entry = staging_covers / "my-dvd.jpg"
+        assert staging_entry.is_file()
+        assert not staging_entry.is_symlink()
+        assert staging_entry.read_bytes() == new_bytes
+        # Served original is completely untouched — atomic publish is preserved.
+        assert served_cover.read_bytes() == original_bytes

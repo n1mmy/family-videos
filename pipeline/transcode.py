@@ -168,9 +168,23 @@ def _exclusive_lock(lock_path):
     """Acquire an exclusive non-blocking advisory flock on `lock_path`.
 
     Yields once with the lock held, releases on exit (including on
-    exception). The lock fd is created with O_CLOEXEC so it doesn't
-    leak into ProcessPoolExecutor workers, and O_NOFOLLOW so a
-    pre-planted symlink at the lock path is rejected with ELOOP.
+    exception).
+
+    Open flags:
+    - O_CLOEXEC: closes the fd on exec(). ffmpeg subprocesses spawned
+      via subprocess.run therefore do NOT inherit this fd. Note that
+      O_CLOEXEC does NOT apply to fork(); ProcessPoolExecutor workers
+      started with the default 'fork' start method on Linux DO inherit
+      the fd (and the underlying flock, since flock state lives on the
+      shared open file description). This is intentional and
+      load-bearing: if the parent dies unexpectedly (SIGKILL, OOM,
+      eviction), the flock is held by the still-running workers until
+      they finish, preventing a concurrent pipeline from running the
+      reaper and deleting staging out from under them. Do not switch
+      to forkserver/spawn without first solving that race another way.
+    - O_NOFOLLOW: rejects a pre-planted final-component symlink at the
+      lock path with ELOOP, so an operator-placed symlink can't cause
+      this process to lock an unrelated inode.
 
     Raises BlockingIOError if another process already holds the lock.
     Other OSErrors from open or flock propagate to the caller.
@@ -360,10 +374,20 @@ def extract_smart_thumbnail(mkv_path, thumb_path, duration):
 
 
 def copy_cover(dvd_dir, covers_dir, dvd_name):
-    """Copy DVD cover JPG to covers directory. Returns relative path or empty string."""
+    """Copy DVD cover JPG to covers directory. Returns relative path or empty string.
+
+    Breaks any pre-existing staging symlink at cover_dst before the copy.
+    copy_served_to_staging may have placed an absolute symlink into served
+    there; shutil.copy2 follows symlinks on the destination and would
+    truncate the served file in place, bypassing the atomic publish
+    guarantee. Unlinking first removes the staging-side link; the served
+    file stays intact until publish replaces it via os.replace.
+    """
     cover_src = dvd_dir / f"{dvd_name}.jpg"
     if cover_src.exists():
         cover_dst = covers_dir / f"{dvd_name}.jpg"
+        if cover_dst.is_symlink() or cover_dst.exists():
+            cover_dst.unlink()
         shutil.copy2(cover_src, cover_dst)
         return f"covers/{dvd_name}.jpg"
     return ""
@@ -555,44 +579,53 @@ def run_pipeline(input_dir, output_dir, overrides_path, schema_path, dry_run, mi
     cfg.output_dir.mkdir(parents=True, exist_ok=True)
     lock_path = cfg.output_dir / LOCK_FILENAME
 
-    # Single-writer lock. Held for the rest of run_pipeline so the reaper,
-    # mkdtemp, transcodes, and publish are all guaranteed to be the only
-    # writers under output_dir. The contextmanager handles open + flock +
-    # release on every exit path including exceptions.
+    # Acquire the single-writer lock. The narrow except scope here is
+    # deliberate: only exceptions from the lock acquisition itself are
+    # reported as lock errors. Exceptions from mkdtemp, the reaper, or
+    # the transcode body propagate normally so operators see the real
+    # cause instead of a misleading "Could not open lock file" message.
+    lock_cm = _exclusive_lock(lock_path)
     try:
-        with _exclusive_lock(lock_path):
-            staging_base = None
-            try:
-                # Reap leftover staging dirs from prior crashed runs (safe under lock).
-                reap_stale_staging(cfg.output_dir)
-
-                # Set up staging *inside* output_dir so it shares the served
-                # filesystem. That lets copy_served_to_staging symlink existing
-                # content (cheap on CephFS, unlike hardlinks) and publish_staging
-                # use os.replace (atomic per-file rename, no bytes copied). The
-                # leading dot keeps the dir invisible to nginx, which only aliases
-                # /videos/, /thumbs/, /covers/.
-                staging_base = Path(tempfile.mkdtemp(
-                    dir=str(cfg.output_dir),
-                    prefix=STAGING_PREFIX,
-                ))
-                prepare_staging(staging_base)
-
-                # output_dir was just mkdir'd above, so it definitely exists.
-                # copy_served_to_staging has its own internal guard for
-                # empty/missing content subdirs.
-                copy_served_to_staging(cfg.output_dir, staging_base)
-
-                return _run_pipeline_body(cfg, staging_base, overrides)
-            finally:
-                if staging_base is not None:
-                    shutil.rmtree(staging_base, ignore_errors=True)
+        lock_cm.__enter__()
     except BlockingIOError:
         log.error("Another transcode pipeline already holds %s — aborting", lock_path)
         return 2
     except OSError as e:
         log.error("Could not open lock file %s: %s", lock_path, e)
         return 2
+
+    # Lock held from here. Everything below runs under try/finally so
+    # both the staging dir and the lock are released on every exit path
+    # (normal return, early return, raised exception).
+    try:
+        staging_base = None
+        try:
+            # Reap leftover staging dirs from prior crashed runs (safe under lock).
+            reap_stale_staging(cfg.output_dir)
+
+            # Set up staging *inside* output_dir so it shares the served
+            # filesystem. That lets copy_served_to_staging symlink existing
+            # content (cheap on CephFS, unlike hardlinks) and publish_staging
+            # use os.replace (atomic per-file rename, no bytes copied). The
+            # leading dot keeps the dir invisible to nginx, which only aliases
+            # /videos/, /thumbs/, /covers/.
+            staging_base = Path(tempfile.mkdtemp(
+                dir=str(cfg.output_dir),
+                prefix=STAGING_PREFIX,
+            ))
+            prepare_staging(staging_base)
+
+            # output_dir was just mkdir'd above, so it definitely exists.
+            # copy_served_to_staging has its own internal guard for
+            # empty/missing content subdirs.
+            copy_served_to_staging(cfg.output_dir, staging_base)
+
+            return _run_pipeline_body(cfg, staging_base, overrides)
+        finally:
+            if staging_base is not None:
+                shutil.rmtree(staging_base, ignore_errors=True)
+    finally:
+        lock_cm.__exit__(None, None, None)
 
 
 def _run_pipeline_body(cfg, staging_base, overrides):

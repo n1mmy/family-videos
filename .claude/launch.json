@@ -6,6 +6,12 @@
       "runtimeExecutable": "python3",
       "runtimeArgs": ["-m", "http.server", "8765", "--bind", "127.0.0.1", "--directory", "frontend"],
       "port": 8765
+    },
+    {
+      "name": "dev",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["scripts/dev_proxy.py"],
+      "port": 8765
     }
   ]
 }

@@ -7,3 +7,4 @@ resources:
   - ingress.yaml
   - htpasswd-secret.yaml
   - overrides-configmap.yaml
+  - job.yaml

@@ -8,3 +8,4 @@ patches:
   - path: ingress-patch.yaml
   - path: htpasswd-patch.yaml
   - path: deployment-patch.yaml
+  - path: job-patch.yaml

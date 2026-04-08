@@ -184,14 +184,33 @@ Python script running as k8s Job with parallel transcoding (ProcessPoolExecutor,
 ### Frontend
 
 Single-page app, vanilla JS with no build step (index.html + app.js + style.css). Single flat app.js with comment sections.
-- **Auth:** nginx `auth_basic` (browser native dialog, remembered by browser).
-- **Timeline scrubber:** Sticky at top. Draggable handle with **discrete year snapping**. Debounce grid re-render by ~150ms on rapid drag. Clickable year labels below (tap-friendly for grandparents). **Video density indicators**: proportional bars showing video count per year. Big year display.
-- **Date range filtering:** a video appears for all years it spans (span model). Empty years show "No videos from [year]" message. Videos with null dates in "Undated" section.
-- **DVD-grouped video grid:** Videos grouped by `dvd` field with DVD cover art header. Sub-cards for individual titles. Single-title DVDs show cover as secondary element. **Lazy thumbnails** via IntersectionObserver (eager fallback for old Safari). Broken thumbnails show placeholder icon. **Preconnect hints** on hover for video URLs.
-- **Player overlay:** Dark background, native `<video>` element, 4:3 aspect ratio. Clean player: video + close button only (no cover in player). Close via X button / ESC key only (NOT click-outside — accidental taps should not dismiss for elderly users on touch devices). Focus returns to card after close.
-- **URL deep-linking:** `#YYYY` jumps to year, `#video-id` auto-opens player. Hash updates on year change. Back button syncs via `hashchange` event.
-- **Keyboard navigation:** Left/Right arrows for timeline years, Enter/Space to play focused card, Escape to close player.
-- **Mobile:** Single-column grid, year labels as primary nav, DVD groups stacked (no collapse).
+
+**Layout (v0.2.0.0 — "Anchored Spine"):** Three-region grid: sticky top bar, sticky left spine, scrollable content column.
+- **Top bar:** "Family Videos" title + horizontal timeline scrubber + chevron tap targets. Sticky at the top of the viewport across all scroll positions.
+- **Left spine (desktop):** Massive Instrument Serif year number (clamps `140px → 220px` with viewport width) anchored sticky on the left rail. Up/down chevron buttons above and below as alternative steppers to the top-bar chevrons. On mobile (<640px) the spine collapses into a centered horizontal year banner above the content; spine chevrons are hidden so the top-bar pair is the sole stepper.
+- **Content column:** Editorial flow of every year section with content, rendered all at once instead of swapping a single year on each click. Each section has an Instrument Serif year heading + DVD groups (cover + title + 4:3 video grid). Hairline dividers between sections.
+
+**Navigation (all sources stay in lockstep):**
+- **Timeline scrubber:** Draggable handle with discrete content-year snapping. Drag-session cache snapshots label centers + track rect at `mousedown`, so `onMove` does zero layout reads per pointer move. URL hash + screen-reader announcement deferred during drag and flushed once on drag end.
+- **Top-bar chevrons (`‹ ›`) and spine chevrons (`^ v`):** Step the current year through `state.yearsWithContent`, skipping empty runs. Disable at endpoints.
+- **Discontinuity markers:** Runs of consecutive empty years collapse on the top scrubber into `···` markers with tooltips showing the skipped range. Clicking a marker snaps to the nearest year with content.
+- **Scroll-spy:** `IntersectionObserver` with anchor line at `--top-bar-height + 24px` (read live from CSS so the line follows desktop/mobile differences) tracks the topmost visible section across callbacks (not just the per-batch deltas). Updates spine + active label + active section + URL hash. Programmatic scrolls use a 2-second guard window cleared early via the native `scrollend` event when supported.
+- **Keyboard:** Left/Right arrows for `stepPrev`/`stepNext`, Enter/Space to play focused card, Escape to close player or cover viewer.
+
+**Data model:**
+- **DVD primary-year grouping:** A DVD appears exactly once at the year of its EARLIEST `dateStart` video. Two-pass walk: first compute the anchor year per DVD, then bucket every video under that single year. (Single-pass `(perVideoYear, dvdId)` keys silently split multi-year DVDs.)
+- **Span model `videosByYear`:** Kept narrowly for the top-timeline density bars. User-facing counts use `dvdGroupsByYear` so multi-year DVDs aren't double-counted.
+- **Empty manifest fallback:** `applyHash` and `syncYearDisplay` guard against null/undefined years; an empty library renders "No videos in this library yet." with the spine and top timeline hidden. `deriveYearRangeFromVideos` clamps to `[1900, currentYear+5]` so a bogus `99990101` can't allocate 8000 years.
+
+**Video grid:** Lazy thumbnails via IntersectionObserver (eager fallback for old Safari). Broken thumbnails show placeholder icon. Preconnect hints on hover for video URLs.
+
+**DVD cover lightbox:** Cover thumbnails (60px) are wrapped in `<button>` and clicking opens a full-size lightbox (up to `min(90vw, 1200px) × 85vh`). Many covers in this archive are handwritten VHS labels that are illegible at 60px. Closes via dedicated `×` button, Escape key, or backdrop click. Background goes inert; focus returns to the originating cover button on close (with `preventScroll`); a Tab focus trap is in place as defense in depth for browsers without `inert` support; cover image src is cleared on close to free the decoded bitmap.
+
+**Player overlay:** Dark background, native `<video>` element, 4:3 aspect ratio. Clean player: video + close button only (no cover in player). Close via X button / Escape key only (NOT click-outside — accidental taps should not dismiss for elderly users on touch devices). Background goes inert; focus returns to card after close.
+
+**URL deep-linking:** `#YYYY` jumps to nearest year with content (snaps via `nearestContentYear()` if the year is empty), `#video-id` auto-opens player after rendering. Hash updates on year change. `hashchange` listener cancels any in-flight `setTimeout(openPlayer)` from a prior deep link to prevent stale-video races.
+
+**Auth:** nginx `auth_basic` (browser native dialog, remembered by browser).
 
 ### Wireframe reference
 

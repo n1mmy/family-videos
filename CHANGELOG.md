@@ -2,6 +2,18 @@
 
 All notable changes to Family Videos will be documented in this file.
 
+## [0.0.2.0] - 2026-04-07
+
+### Added
+- nginx container image serving the frontend SPA with HTTP Basic Auth, rate limiting (5 req/s per real client IP), and cache headers (immutable for videos/thumbnails/covers, no-cache for manifest)
+- Kubernetes deployment, service, and ingress manifests for hosting on a home k8s cluster
+- Kustomize base/overlay pattern so cluster-specific details (domain, TLS, registry, credentials) stay out of the public repo
+- Example overlay showing how to customize each manifest
+- Readiness probe backed by a .healthz marker file on the PVC to detect Ceph mount failures
+- Security headers on all responses (HSTS, X-Frame-Options, X-Content-Type-Options)
+- Gzip compression for text assets (HTML, CSS, JS, JSON)
+- Health check marker file written by the transcode pipeline for probe verification
+
 ## [0.0.1.0] - 2026-04-07
 
 ### Added

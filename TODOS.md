@@ -17,6 +17,8 @@ Covers are valuable for the grandparent experience (recognizable cover art). V1 
 
 **Context:** User explicitly said covers are "very valuable for grandma to see as part of the experience." Want both video frame thumbnails AND covers visible. UX TBD. **Update from CEO review:** DVD grouping with cover art headers is now in V1 scope. This TODO is about further refinement beyond the group header layout.
 
+**Partial progress:** v0.2.0.0 added a clickable cover lightbox — tapping the 60px cover thumbnail opens the full image in a lightbox modal (Escape/backdrop/× to close, focus trap, inert background). Solves the immediate "I can't read what's on this cover" problem since many covers are handwritten VHS labels. Future iterations could add a detail panel with the full DVD's video list, or sidebar context inside the player overlay.
+
 ### Full WCAG contrast audit (light + dark mode)
 Run a systematic contrast check across all text/background combinations in both light and dark mode. The design review identified that muted text (#8B7E74) fails AA at 12-14px and added a darker alternative (#6B5E54) for small text. A full audit should verify all combinations meet WCAG AA, especially dark mode where the charcoal background + muted text ratio hasn't been tested.
 
@@ -34,3 +36,37 @@ Button to play all videos from the selected year in sequence, auto-advancing whe
 **Context:** Surfaced in CEO review, user chose to defer to post-V1. Natural fast-follow once the player overlay is solid. Effort: S. Edge cases to handle: video 404 mid-playlist (skip to next), resume on page reload (hash-based position tracking).
 **Priority:** P2
 **Depends on:** V1 player overlay working correctly.
+
+## Frontend Eng Debt
+
+### Bootstrap a frontend test framework
+The frontend (vanilla JS/HTML/CSS) has zero automated tests. Backend `tests/` covers the transcode pipeline (70 pytest cases) but nothing exercises `frontend/app.js` — coverage audits during `/ship` are manual diagrams against live preview MCP runs. As `frontend/app.js` grows past 1100 lines with non-trivial state machines (drag cache, scroll-spy guard, deferred side effects, primary-year grouping, lightbox focus trap), the lack of automated coverage is increasingly load-bearing on manual verification.
+
+**Context:** v0.2.0.0 ship surfaced this when the coverage audit could only produce a code-path diagram + user-flow checklist instead of running tests. The right tool is probably Vitest (unit) + Playwright (e2e against the dev proxy). Vitest can exercise pure functions (`getYearRange`, `nearestContentYear`, `formatDvdTitle`, `deriveYearRangeFromVideos`) immediately without DOM, and Playwright covers the drag/scroll/lightbox flows against real `manifest.json`.
+
+**Priority:** P1
+**Depends on:** Nothing — straight bootstrap.
+
+### Drag cache invalidation on scrubber horizontal scroll
+The scrubber drag-session cache (`dragCache` in `initScrubberDrag`) snapshots label center coordinates at `mousedown`. If `.timeline-scrubber` scrolls horizontally during the drag — possible via iOS rubber-band, focus-into-view, or a programmatic `scrollIntoView` of a focused descendant — the cached centers go stale and `getYearFromPointer` snaps to wrong years.
+
+**Context:** Caught by Claude adversarial review. Edge case in practice (drag captures pointer, scrubber rarely scrolls mid-drag), but real. Fix: also cache `scrubber.scrollLeft` on mousedown and rebuild the cache whenever the scrubber emits a `scroll` event during drag.
+
+**Priority:** P3
+**Depends on:** Frontend test framework (#bootstrap-frontend-tests) so the fix can be regression-tested.
+
+### Massive DOM at archive scale
+`renderAllSections()` renders every year section + every DVD group + every video card up front. Today's manifest (~74 videos across 20 years) keeps the full document at ~13,000px tall, which is fine. A larger archive (a few hundred videos across 40 years) would push that into territory where iPad/phone first-paint and GC pauses become noticeable.
+
+**Context:** Codex adversarial review flagged it. The mitigation is virtualization: render only the year sections within ~2 viewports of the current scroll position, plus thumbnail lazy-load (already in place). Defer until a real scaling problem is observed — the current sparse-year condensing already cuts the section count by half.
+
+**Priority:** P3
+**Depends on:** Real perf measurement on a representative large archive.
+
+### Reduce 2-second programmatic-scroll guard ceiling
+`scrollToYearSection` sets a 2000ms guard so the IntersectionObserver doesn't ping-pong during in-flight smooth scrolls. The native `scrollend` event clears it early on Chromium/Firefox, but Safari < 18 has no `scrollend` and pays the full 2 seconds. During those 2 seconds the scroll-spy is dead — if the user scrolls manually they don't see the spine update until the timer expires.
+
+**Context:** Codex adversarial review. Lower-impact but real on Safari 17 and earlier. Fix: poll `window.scrollY` stabilization in a `requestAnimationFrame` loop and clear the guard when scroll position has held steady for 2 frames.
+
+**Priority:** P3
+**Depends on:** Nothing.

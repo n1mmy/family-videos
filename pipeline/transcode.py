@@ -327,6 +327,9 @@ def publish_staging(staging_dir, output_dir):
             output_dir / "manifest.json",
         )
 
+    # Write health check marker (k8s readiness probe reads this via nginx)
+    (output_dir / ".healthz").write_text("ok\n")
+
 
 # --- Main ---
 

@@ -1,0 +1,16 @@
+# Replace with your container registry and worker count.
+# PVC names (family-mkv, family-served) are applied via namespace —
+# override here if yours differ.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: family-transcode
+spec:
+  template:
+    spec:
+      containers:
+        - name: transcode
+          image: ghcr.io/youruser/family-transcode:v1.0.0
+          env:
+            - name: WORKERS
+              value: "48"

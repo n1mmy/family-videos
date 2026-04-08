@@ -550,6 +550,11 @@ function openPlayer(videoId) {
   // Update hash
   history.pushState(null, '', '#' + videoId);
 
+  // Mark the rest of the page inert so assistive tech and mouse focus
+  // cannot escape the modal into background content while it's open.
+  var appEl = $('.app');
+  if (appEl && 'inert' in appEl) appEl.inert = true;
+
   // Focus close button and trap focus within overlay
   $('#player-close-btn').focus();
   overlay.addEventListener('keydown', trapFocus);
@@ -587,6 +592,10 @@ function closePlayer() {
   overlay.classList.remove('visible');
   overlay.removeEventListener('keydown', trapFocus);
   state.playerVideoId = null;
+
+  // Re-enable the rest of the page now that the modal is closed.
+  var appEl = $('.app');
+  if (appEl && 'inert' in appEl) appEl.inert = false;
 
   // Restore hash to current year (replaceState avoids polluting back button)
   var yearHash = state.currentYear && state.currentYear !== 'undated'

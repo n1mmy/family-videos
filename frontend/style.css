@@ -8,6 +8,7 @@
   --text-muted: #6B5E54;
   --accent: #C68B3F;
   --accent-hover: #B07A32;
+  --on-accent: #2C2420; /* always warm-dark; amber backgrounds need dark text for AA in both modes */
   --border: #E8E2DA;
   --overlay: rgba(26, 22, 18, 0.92);
   --badge-bg: rgba(26, 22, 18, 0.78);
@@ -171,7 +172,7 @@ body {
   font-family: 'DM Sans', -apple-system, sans-serif;
   font-size: 16px;
   font-weight: 600;
-  color: var(--text);
+  color: var(--on-accent);
   background: var(--accent);
   border: none;
   border-radius: var(--radius-sm);

@@ -1,5 +1,7 @@
 /* === CSS Custom Properties (Light Mode) === */
 :root {
+  color-scheme: light dark;
+
   --bg: #FAF7F2;
   --surface: #FFFFFF;
   --text: #2C2420;
@@ -571,10 +573,12 @@ body {
   justify-content: center;
   background: none;
   border: none;
-  color: #FFFFFF;
-  font-size: 24px;
+  color: #F0EBE3;
+  font-family: 'DM Sans', -apple-system, sans-serif;
+  font-size: 28px;
+  font-weight: 300;
   cursor: pointer;
-  opacity: 0.8;
+  opacity: 0.85;
   transition: opacity var(--duration-micro) ease-out;
   line-height: 1;
 }

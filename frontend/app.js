@@ -225,12 +225,17 @@ function setYear(year) {
 
   // Update active label
   var labels = $$('.timeline-label');
+  var prefersReducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
   for (var i = 0; i < labels.length; i++) {
     var labelYear = labels[i].getAttribute('data-year');
     var isActive = labelYear === String(year);
     labels[i].classList.toggle('active', isActive);
     if (isActive && !state.isDragging) {
-      labels[i].scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+      labels[i].scrollIntoView({
+        block: 'nearest',
+        inline: 'center',
+        behavior: prefersReducedMotion ? 'auto' : 'smooth'
+      });
     }
   }
 

@@ -471,12 +471,22 @@ def validate_manifest(manifest, schema_path):
 
 
 def write_manifest_atomic(manifest, target_path):
-    """Write manifest atomically via temp file + rename."""
+    """Write manifest atomically via temp file + rename.
+
+    mkstemp creates the temp file with mode 0o600 (its security
+    contract), and the rename preserves it. That breaks staging where
+    the pipeline runs as root and nginx runs as the unprivileged nginx
+    user — the published manifest would be unreadable to the worker.
+    fchmod via the open fd before close so the published file is
+    0o644 (matches the other static assets nginx serves) and there is
+    no path-based TOCTOU window between close and chmod.
+    """
     target_path = Path(target_path)
     fd, tmp = tempfile.mkstemp(dir=str(target_path.parent), suffix=".json")
     try:
         with os.fdopen(fd, "w") as f:
             json.dump(manifest, f, indent=2)
+            os.fchmod(f.fileno(), 0o644)
         os.rename(tmp, str(target_path))
     except Exception:
         os.unlink(tmp)
@@ -559,6 +569,14 @@ def run_pipeline(input_dir, output_dir, overrides_path, schema_path, dry_run, mi
         min_duration=min_duration,
         workers=workers,
     )
+
+    # Pin umask so directories, .healthz, ffmpeg outputs, and thumbnails
+    # are world-readable regardless of the operator's process umask.
+    # nginx runs as a different uid and must be able to traverse and
+    # read everything we publish. Without this, a hardened base image
+    # with umask 0o077 would lock nginx out even though manifest.json
+    # is fchmod'd to 0o644 explicitly.
+    os.umask(0o022)
 
     # Pre-flight that doesn't need the lock
     if not cfg.input_dir.is_dir():

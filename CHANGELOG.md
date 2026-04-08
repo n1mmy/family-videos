@@ -2,6 +2,12 @@
 
 All notable changes to Family Videos will be documented in this file.
 
+## [0.1.1.0] - 2026-04-08
+
+### Fixed
+- Published `manifest.json` is now readable to nginx in the staging container. The transcode pipeline runs as root, nginx runs as the unprivileged `nginx` user, and `tempfile.mkstemp` was creating the manifest's temp file with mode `0o600` per its documented security contract. The atomic rename preserved that mode, so nginx got `EACCES` on every request and the catalog page failed to load. `write_manifest_atomic` now `fchmod`s the open file descriptor to `0o644` before close, eliminating the path-based TOCTOU window between close and chmod.
+- Pipeline now pins `umask 0o022` at the start of `run_pipeline` so directories, the `.healthz` readiness marker, transcoded mp4s, thumbnails, and covers are all world-readable regardless of the operator's process umask. Previously they relied on the alpine base image's default umask being `0o022`, which would have silently broken on a hardened base image with `umask 0o077`.
+
 ## [0.1.0.0] - 2026-04-07
 
 ### Changed

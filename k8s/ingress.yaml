@@ -1,0 +1,22 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: family-videos
+  labels:
+    app: family-videos
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: ""  # REPLACE: your domain (e.g. videos.example.com)
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: family-videos
+                port:
+                  number: 80
+  tls:
+    - hosts:
+        - ""  # REPLACE: same domain as above

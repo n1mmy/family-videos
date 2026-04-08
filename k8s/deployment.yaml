@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: family-videos
+  labels:
+    app: family-videos
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: family-videos
+  template:
+    metadata:
+      labels:
+        app: family-videos
+    spec:
+      containers:
+        - name: nginx
+          image: family-videos:latest
+          ports:
+            - containerPort: 80
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          volumeMounts:
+            - name: served-data
+              mountPath: /data/served
+              readOnly: true
+            - name: htpasswd
+              mountPath: /etc/nginx/auth
+              readOnly: true
+      volumes:
+        - name: served-data
+          persistentVolumeClaim:
+            claimName: family-served
+        - name: htpasswd
+          secret:
+            secretName: family-videos-htpasswd

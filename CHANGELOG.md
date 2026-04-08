@@ -2,6 +2,11 @@
 
 All notable changes to Family Videos will be documented in this file.
 
+## [0.1.3.0] - 2026-04-08
+
+### Added
+- Local dev server that runs the real site against production data. A new `dev` launch config (`.claude/launch.json`) and `scripts/dev_proxy.py` serve `frontend/` from `127.0.0.1:8765` while transparently proxying `/manifest.json`, `/videos/*`, `/thumbs/*`, `/covers/*`, and `/healthz` to a configured upstream with HTTP Basic Auth injected. Lets you iterate on HTML/CSS/JS against a real 74-video manifest without transcoding anything locally. Video seeking works end-to-end — the proxy forwards `Range` headers and relays `206 Partial Content` responses. Credentials and upstream URL live in `~/.config/family-videos/dev-auth` (outside the repo), so no private hostnames land in git.
+
 ## [0.1.2.0] - 2026-04-08
 
 ### Changed

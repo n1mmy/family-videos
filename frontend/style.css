@@ -163,8 +163,8 @@ body {
 .error-state button {
   font-family: 'DM Sans', -apple-system, sans-serif;
   font-size: 16px;
-  font-weight: 500;
-  color: #FFFFFF;
+  font-weight: 600;
+  color: var(--text);
   background: var(--accent);
   border: none;
   border-radius: var(--radius-sm);
@@ -312,8 +312,9 @@ body {
 }
 
 .timeline-label.active {
-  color: var(--accent);
-  font-weight: 600;
+  color: var(--text);
+  font-weight: 700;
+  box-shadow: inset 0 -2px 0 0 var(--accent);
 }
 
 .density-bar {
@@ -605,8 +606,8 @@ body {
 .player-error button {
   font-family: 'DM Sans', -apple-system, sans-serif;
   font-size: 16px;
-  font-weight: 500;
-  color: #FFFFFF;
+  font-weight: 600;
+  color: var(--text);
   background: var(--accent);
   border: none;
   border-radius: var(--radius-sm);

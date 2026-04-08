@@ -2,6 +2,24 @@
 
 All notable changes to Family Videos will be documented in this file.
 
+## [0.1.0.0] - 2026-04-07
+
+### Changed
+- Transcode pipeline now stages inside `/data/served` instead of the container's ephemeral root. Unchanged files are represented as cheap absolute symlinks into the served tree (faster than hardlinks on CephFS), and new transcodes publish via per-file `os.replace` for an atomic rename instead of a byte-by-byte copy back. The manifest.json rename at the end of publish is the commit point for the whole set.
+- Pipeline runs now print per-title progress in the `as_completed` loop — `[N/total] transcoded foo.mp4`, `[N/total] skipped (up to date)`, or `[N/total] FAILED` — plus discovery and publish breadcrumbs, so long runs are observable instead of silent.
+- Disk space pre-flight now measures only the three published content subdirs (videos/, thumbs/, covers/) via `rglob`, excluding leftover staging directories and the `.healthz`/`.transcode.lock` bookkeeping files. Headroom requirement dropped from 2× served size to 10% (with a 1 GiB floor).
+
+### Added
+- Single-writer advisory `fcntl.flock` on `/data/served/.transcode.lock` held for the entire pipeline run. A second concurrent invocation exits cleanly with code 2 instead of corrupting the manifest via a race. The lock file is opened with `O_CLOEXEC` (so ffmpeg subprocesses don't inherit it) and `O_NOFOLLOW` (so an operator-planted symlink at the lock path is rejected with ELOOP).
+- Startup reaper `reap_stale_staging` that removes any leftover `.staging-*` directories from prior crashed runs. Handles real directories, stray symlinks, and regular files defensively — symlinks are unlinked without being followed, so a malicious `.staging-evil -> /etc` cannot escalate to deleting its target.
+- `try/finally` cleanup wrapper around the pipeline body, so the staging dir is always `rmtree`'d — on normal return, dry runs, transcode errors, unhandled exceptions, and lock-acquisition failures. The lock is released in a nested `finally`, guaranteed even if staging cleanup raises.
+- Pre-transcode `unlink` guard in `process_one_title` that breaks any symlink at the staging output path before invoking ffmpeg. Without it, ffmpeg's `-y` (open with `O_TRUNC`) would follow the staging symlink and zero out the served target on the other end.
+- 25 new tests covering the symlink invariants, staging cleanup safety, flock semantics (concurrent-run rejection and release on every exit path), reaper symlink handling, `check_disk_space` formula, and the `copy_cover` symlink-break regression test. Test count grew from 43 to 68.
+
+### Fixed
+- `copy_cover` no longer follows the staging symlink and truncates the served original cover in place. `shutil.copy2` opens the destination with `O_TRUNC`, which bypassed this branch's atomic-publish guarantee for cover files specifically. The function now unlinks the staging entry before the copy, matching the pattern used in `process_one_title`.
+- Pipeline filesystem errors from `mkdtemp`, the reaper, or the transcode body are no longer misreported as "Could not open lock file". The narrow `except OSError` around lock acquisition was previously catching every OSError raised inside the locked body and logging it with the wrong cause, making operational debugging harder.
+
 ## [0.0.2.0] - 2026-04-07
 
 ### Added

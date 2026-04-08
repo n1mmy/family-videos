@@ -2,6 +2,31 @@
 
 All notable changes to Family Videos will be documented in this file.
 
+## [0.1.2.0] - 2026-04-08
+
+### Changed
+- DVD group titles now read as human dates. A DVD like `197902-198201` used to render as the raw archive ID `197902 198201` — a grandparent-facing app leaking filesystem metadata. It now reads `Feb 1979 – Jan 1982`, and an `19830811-19831212`-style ID becomes `Aug 1983 – Dec 1983`. The monogram placeholder that shows when a cover image is missing now falls back to a neutral square when the title is purely numeric, instead of showing a meaningless "1".
+- Timeline year display now uses tabular numerals. The big serif year no longer reflows horizontally while you drag the scrubber from, say, "1989" to "1990" — digits lock to a fixed width so the timeline feels calm.
+- The active timeline year label now uses dark text with an amber underline instead of amber text. The old active-state color was `#C68B3F` on warm paper at 2.74:1 contrast, which failed WCAG AA for a grandparent audience.
+- Error-state and player-error action buttons now use warm-dark text (`#2C2420`) on the amber background instead of white. White-on-amber was 2.93:1 (fails AA); dark-on-amber is 5.19:1 (light) and 6.47:1 (dark) and passes AA in both modes. The "Try Again" and player "Close" buttons are now legible in dark mode, which they were not before.
+- Body text is now 18px instead of 16px, matching the stated DESIGN.md spec for a grandparent audience.
+- Player overlay is now a proper modal dialog. The overlay used `role="region"` despite trapping focus like a modal; assistive tech had no way to know it was a blocking dialog. Now uses `role="dialog" aria-modal="true"` and toggles `inert` on the background app wrapper so VoiceOver and Tab navigation cannot escape the modal into dimmed content.
+- Player error card (shown when a video file is missing) now reads as a warm surface card instead of a hardcoded `rgba(0,0,0,0.5)` backdrop. Warm paper in light mode, warm charcoal in dark mode, matching the Family Album language.
+- Duration badges on video thumbnails are now tokenized via `--badge-bg`. In light mode they stay warm-dark; in dark mode they shift to near-black so the text stays visible against the dark charcoal thumbnail placeholders that used to hide them.
+- Honor `prefers-reduced-motion` end-to-end. Smooth scroll in CSS is wrapped in `@media (prefers-reduced-motion: no-preference)`, and the JS `scrollIntoView` call now checks `matchMedia` at the point of use so users who request reduced motion actually get instant scroll instead of smooth.
+- Duplicate screen reader announcement on year change removed. The visual year display had `aria-live="polite"` AND `setYear()` called `announce()` with richer text — so every scrub got read twice. The visual display is now `aria-hidden="true"` and the explicit announce (which also reads the video count) is the single source of truth.
+- Error/player error buttons consolidated into one shared CSS rule. The two rules were 11 identical lines and had to be updated in lockstep by the contrast fix — clear evidence they should always have been one rule.
+
+### Added
+- `color-scheme: light dark` declaration on `:root` and paired `<meta name="theme-color">` tags for light and dark. Browser form controls, scrollbars, and (on mobile) the browser chrome/status bar now match the Family Album palette in both modes.
+- `text-wrap: balance` on display headings so multi-word serif headings break evenly without awkward widows.
+- `font-family` on the player close `×` button. It was inheriting Arial from the user agent — a browser default in a design that explicitly uses zero browser defaults.
+- `--on-accent` design token for "text on amber backgrounds", fixed at warm-dark in both modes so future amber surfaces get AA contrast by default instead of regressing.
+- Dev preview launch config (`.claude/launch.json`) that serves `frontend/` on `127.0.0.1:8765` via `python3 -m http.server`. Bound to loopback only so the dev server isn't exposed to LAN on untrusted networks.
+
+### Fixed
+- `matchMedia` read moved off the scrubber drag hot path. `setYear()` fires on every mousemove during drag; reading the reduced-motion preference on every call when the scroll branch is gated out was wasted work.
+
 ## [0.1.1.0] - 2026-04-08
 
 ### Fixed

@@ -20,7 +20,11 @@ Covers are valuable for the grandparent experience (recognizable cover art). V1 
 ### Full WCAG contrast audit (light + dark mode)
 Run a systematic contrast check across all text/background combinations in both light and dark mode. The design review identified that muted text (#8B7E74) fails AA at 12-14px and added a darker alternative (#6B5E54) for small text. A full audit should verify all combinations meet WCAG AA, especially dark mode where the charcoal background + muted text ratio hasn't been tested.
 
-**Context:** Design review Pass 6 found the issue. Eng review (re-run) unified `--text-muted` to #6B5E54 everywhere (passes AA at all sizes). **Remaining:** verify dark mode muted text (#A89B8F on #2D2824), semantic colors (success/warning/error/info) on both light and dark backgrounds, accent text on surfaces.
+**Context:** Design review Pass 6 found the issue. Eng review (re-run) unified `--text-muted` to #6B5E54 everywhere (passes AA at all sizes).
+
+**Partial progress:** v0.1.2.0 /design-review audited and fixed: button text on amber (was 2.93, now 5.19 light / 6.47 dark via new `--on-accent` token), active timeline label (now warm-dark text with amber underline), duration badges tokenized for dark mode. Dark mode muted text `#A89B8F on #2D2824` verified at 5.38 via computed contrast.
+
+**Remaining:** semantic colors (success/warning/error/info) on both light and dark backgrounds.
 **Priority:** P3
 **Depends on:** V1 frontend implementation (need actual rendered UI to test against).
 

@@ -603,7 +603,8 @@ body {
   justify-content: center;
   gap: var(--space-md);
   border-radius: var(--radius-md);
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--surface);
+  border: 1px solid var(--border);
 }
 
 .player-error.visible {
@@ -613,7 +614,7 @@ body {
 .player-error p {
   font-family: 'DM Sans', -apple-system, sans-serif;
   font-size: 18px;
-  color: #FFFFFF;
+  color: var(--text);
 }
 
 .player-error button {

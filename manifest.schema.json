@@ -1,0 +1,44 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Family Videos Manifest",
+  "type": "object",
+  "required": ["title", "dateRange", "videos"],
+  "additionalProperties": false,
+  "properties": {
+    "title": {
+      "type": "string"
+    },
+    "dateRange": {
+      "type": "object",
+      "required": ["start", "end"],
+      "additionalProperties": false,
+      "properties": {
+        "start": { "type": ["string", "null"] },
+        "end": { "type": ["string", "null"] }
+      }
+    },
+    "videos": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id", "title", "dateStart", "dateEnd", "duration",
+          "file", "thumbnail", "cover", "dvd", "sourceFile"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string" },
+          "title": { "type": "string" },
+          "dateStart": { "type": ["string", "null"] },
+          "dateEnd": { "type": ["string", "null"] },
+          "duration": { "type": "integer", "minimum": 0 },
+          "file": { "type": "string" },
+          "thumbnail": { "type": "string" },
+          "cover": { "type": "string" },
+          "dvd": { "type": "string" },
+          "sourceFile": { "type": "string" }
+        }
+      }
+    }
+  }
+}

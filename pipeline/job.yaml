@@ -1,0 +1,46 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: family-transcode
+spec:
+  backoffLimit: 2
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: transcode
+          image: family-transcode:latest
+          args:
+            - /data/output
+            - --output-dir
+            - /data/served
+            - --overrides
+            - /config/overrides.json
+          env:
+            - name: WORKERS
+              value: "8"
+          resources:
+            requests:
+              cpu: "4"
+              memory: 4Gi
+            limits:
+              cpu: "16"
+              memory: 8Gi
+          volumeMounts:
+            - name: mkv-pvc
+              mountPath: /data/output
+              readOnly: true
+            - name: served-pvc
+              mountPath: /data/served
+            - name: overrides
+              mountPath: /config
+      volumes:
+        - name: mkv-pvc
+          persistentVolumeClaim:
+            claimName: family-mkv
+        - name: served-pvc
+          persistentVolumeClaim:
+            claimName: family-served
+        - name: overrides
+          configMap:
+            name: family-overrides

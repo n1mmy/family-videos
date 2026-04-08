@@ -77,14 +77,16 @@ The time machine concept. Single HTML page with draggable year scrubber (discret
 │            → copy   → DVD cover.jpg              │
 │            → script → manifest.json (validated)  │
 │                                                  │
-│  staging/ → symlink swap → /data/served/         │
+│  Single-writer fcntl.flock on .transcode.lock    │
+│  /data/served/.staging-XXX/ (symlinks in,        │
+│    atomic per-file os.replace out)               │
 │  Config: overrides.json (ConfigMap)              │
 │  Flags: --dry-run, --min-duration, WORKERS env   │
 └──────────────────┬──────────────────────────────┘
                    │
                    ▼
 ┌─────────────────────────────────────────────────┐
-│  STATIC OUTPUT (served by nginx via symlink)     │
+│  STATIC OUTPUT (served by nginx from PVC)        │
 │                                                  │
 │  /videos/          ← transcoded .mp4 files      │
 │  /thumbs/          ← smart poster thumbnails    │
@@ -164,16 +166,20 @@ Future extensions (no schema break):
 ### Pipeline script
 
 Python script running as k8s Job with parallel transcoding (ProcessPoolExecutor, configurable workers via `WORKERS` env var):
-1. Pre-flight disk space check. Supports `--dry-run` to preview without transcoding.
-2. Copies existing served directory to staging (preserves idempotent skips in atomic publish).
-3. Walks directories in MKV output (one per DVD), parses dates/titles from directory names.
-4. Loads `overrides.json` (mounted as ConfigMap) for per-DVD and per-title metadata overrides. Auto-filters titles < 60 seconds.
-5. Always re-encodes to .mp4: h264 CRF 23, 480p, yadif deinterlace, AAC 128kbps, `-movflags +faststart`, normalize SAR to 1:1 (square pixels for browser compatibility). Skips if output already exists and source is not newer.
-6. Smart thumbnail: samples 5 frames, picks highest color variance (avoids black frames).
-7. Copies DVD cover JPGs to `covers/` directory.
-8. Adds cache-busting query params (`?v=<hash>`) to asset URLs in manifest.
-9. Validates manifest against `manifest.schema.json`, writes atomically.
-10. Symlink swap: atomically replaces served directory.
+1. Pre-flight disk space check (10% headroom of published content, 1 GiB floor). Supports `--dry-run` to preview without transcoding.
+2. Acquire single-writer `fcntl.flock` on `/data/served/.transcode.lock` (`O_CLOEXEC | O_NOFOLLOW`). A concurrent run exits with code 2.
+3. Reap leftover `.staging-*` directories from prior crashed runs.
+4. Create a fresh `.staging-<random>/` directory inside `/data/served/`. Hidden from nginx by the dot prefix.
+5. Symlink existing served files into staging (cheap on CephFS — unlike hardlinks, no per-link MDS bookkeeping). This preserves idempotent skips without copying any bytes.
+6. Walks directories in MKV output (one per DVD), parses dates/titles from directory names.
+7. Loads `overrides.json` (mounted as ConfigMap) for per-DVD and per-title metadata overrides. Auto-filters titles < 60 seconds.
+8. Always re-encodes to .mp4: h264 CRF 23, 480p, yadif deinterlace, AAC 128kbps, `-movflags +faststart`, normalize SAR to 1:1 (square pixels for browser compatibility). Skips if output already exists and source is not newer. Workers unlink any staging entry (breaking the symlink) before invoking ffmpeg so `-y` can't follow the link and truncate the served target.
+9. Smart thumbnail: samples 5 frames, picks highest color variance (avoids black frames).
+10. Copies DVD cover JPGs to `covers/` directory (also unlinks any pre-existing staging symlink before writing).
+11. Adds cache-busting query params (`?v=<hash>`) to asset URLs in manifest.
+12. Validates manifest against `manifest.schema.json`.
+13. Publish: per-file `os.replace` rename of newly transcoded files from staging into `/data/served/{videos,thumbs,covers}/`. Symlinked staging entries (unchanged files) are skipped — the served target is already in place. The final atomic rename of `manifest.json` is the commit point for the whole set.
+14. `try/finally` guarantees staging cleanup on every exit path (normal return, dry run, error, exception).
 
 ### Frontend
 
@@ -206,7 +212,7 @@ A wireframe sketch showing three states (auth dialog, timeline browser with DVD-
 - Works on iPad Safari, Chrome on Android, and desktop browsers
 - Timeline scrubber is the only navigation needed — no menus, no search, no settings
 - Videos play without buffering on a typical home internet connection (nginx serves static files with HTTP range request support by default, enabling seeking and resume in large video files)
-- Adding a new video is: run the pipeline script (idempotent, skips existing), symlink swaps automatically
+- Adding a new video is: run the pipeline script (idempotent, skips existing), atomic per-file rename commits the new manifest
 - Deep-linked URLs work: texting grandma `videos.family.com/#197902-198201-title00` opens that video directly
 
 ## Distribution Plan
@@ -215,11 +221,11 @@ A wireframe sketch showing three states (auth dialog, timeline browser with DVD-
 - Deployed to user's existing k8s cluster with Ceph PVCs
 - Pipeline runs as a k8s Job reading from MKV PVC, writing to served PVC
 - Config externalized: overrides.json as ConfigMap, .htpasswd as Secret
-- Video/thumb/cover files served from PVC mount (symlink-swapped by pipeline)
+- Video/thumb/cover files served from PVC mount (published atomically via per-file `os.replace` with the manifest rename as commit point)
 
 ## Next Steps
 
-1. **Build the pipeline script** — parallel transcode .mkv → .mp4, smart thumbnails, DVD covers, manifest with schema validation, symlink swap. Includes --dry-run, per-title overrides, junk filtering, cache-busting.
+1. **Build the pipeline script** — parallel transcode .mkv → .mp4, smart thumbnails, DVD covers, manifest with schema validation, atomic per-file publish via `os.replace`. Includes --dry-run, per-title overrides, junk filtering, cache-busting.
 2. **Build the SPA** — timeline scrubber (discrete snapping, density indicators), DVD-grouped video grid, player overlay, URL deep-linking, keyboard navigation, lazy thumbnails, error handling.
 3. **Containerize** — Dockerfile with nginx serving static files. ConfigMap for overrides, Secret for htpasswd. Rate limiting.
 4. **Deploy** — k8s manifests (Deployment, Service, Ingress, ConfigMap, Secret) for the home cluster.

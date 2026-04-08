@@ -202,6 +202,7 @@ body {
   color: var(--text);
   text-align: center;
   line-height: 1.2;
+  text-wrap: balance;
 }
 
 .app-subtitle {
@@ -351,6 +352,7 @@ body {
   color: var(--text);
   margin-bottom: var(--space-lg);
   font-variant-numeric: tabular-nums;
+  text-wrap: balance;
 }
 
 .empty-year {

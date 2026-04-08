@@ -46,7 +46,7 @@ Design doc: `~/.gstack/projects/n1mmy-family-videos/nim-claude/adoring-haibt-des
 | 29 | Error resilience | Pre-flight disk space check, k8s Job resource limits, try/catch on JSON.parse in frontend, img onerror placeholder, hashchange listener for back button |
 | 30 | Player overlay | Clean player: video only + close button. No DVD cover in player (cover visible in grid card) |
 | 31 | Frontend organization | Single flat app.js with comment sections. No ES modules, no build step |
-| 32 | Local dev server | `python3 -m http.server` or equivalent for frontend testing (file:// doesn't support fetch) |
+| 32 | Local dev server | Two `.claude/launch.json` configs on `127.0.0.1:8765`: `frontend` (static only, `python3 -m http.server`) and `dev` (`scripts/dev_proxy.py`, serves `frontend/` locally and proxies manifest/videos/thumbs/covers from the real upstream with injected HTTP Basic Auth from `~/.config/family-videos/dev-auth`). Use `dev` to iterate against real production data; use `frontend` for pure static work |
 
 ## Actual Data Structure (from existing pipeline)
 
@@ -323,7 +323,7 @@ Lanes A and B share the manifest.json schema as a contract. B can build against 
 
 1. **Pipeline**: `pytest tests/` — all filename parsing patterns, per-title overrides, junk filtering, error handling
 2. **Pipeline dry-run**: `python3 pipeline/transcode.py --dry-run /data/output/` — verify filename parsing against real data before committing to transcode
-3. **Frontend**: `cd frontend && python3 -m http.server 8000` with a mock `manifest.json` — verify timeline renders, year labels clickable, DVD grouping displays, player overlay works, keyboard nav, deep-linking, density indicators, lazy loading
+3. **Frontend**: run `python3 scripts/dev_proxy.py` (or `preview_start dev`) against the real upstream via `~/.config/family-videos/dev-auth` — verify timeline renders, year labels clickable, DVD grouping displays, player overlay works, keyboard nav, deep-linking, density indicators, lazy loading. For pure static work against a mock manifest, `cd frontend && python3 -m http.server 8000` still works
 4. **Integration**: Deploy to k8s, hit the ingress URL, verify auth_basic prompts, timeline loads, videos play on iPad Safari + Chrome + desktop
 5. **Edge cases**: null dates (undated section), DVD with multiple titles (grouping), `christmas-04-05-06` edge case, empty year (no videos message), deep-link to nonexistent video (graceful fallback), back button after deep-link, rapid scrubber drag (debounce)
 

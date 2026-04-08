@@ -4,19 +4,16 @@ import json
 import os
 import time
 from pathlib import Path
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 import pytest
 from transcode import (
-    build_manifest,
-    check_disk_space,
     copy_cover,
     extract_smart_thumbnail,
     get_duration,
-    process_one_title,
+    publish_staging,
     run_pipeline,
     should_skip,
-    swap_symlink,
     transcode_one,
     validate_manifest,
     write_manifest_atomic,
@@ -326,28 +323,42 @@ class TestDryRun:
         assert len(ffmpeg_called) == 0
 
 
-# --- Symlink swap ---
+# --- Publish staging ---
 
 
-class TestSymlinkSwap:
-    def test_first_run_creates_symlink(self, tmp_path):
+class TestPublishStaging:
+    def test_copies_assets_to_output(self, tmp_path):
         staging = tmp_path / "staging"
-        staging.mkdir()
-        served = tmp_path / "served"
-        swap_symlink(staging, served)
-        assert served.is_symlink()
-        assert served.resolve() == staging.resolve()
+        (staging / "videos").mkdir(parents=True)
+        (staging / "thumbs").mkdir()
+        (staging / "covers").mkdir()
+        (staging / "videos" / "test.mp4").write_bytes(b"\x00" * 100)
+        (staging / "thumbs" / "test.jpg").write_bytes(b"\xff" * 50)
+        (staging / "manifest.json").write_text('{"title":"Test","dateRange":{"start":null,"end":null},"videos":[]}')
 
-    def test_swap_replaces_existing(self, tmp_path):
-        old_staging = tmp_path / "old"
-        old_staging.mkdir()
-        new_staging = tmp_path / "new"
-        new_staging.mkdir()
-        served = tmp_path / "served"
-        os.symlink(str(old_staging), str(served))
-        swap_symlink(new_staging, served)
-        assert served.is_symlink()
-        assert served.resolve() == new_staging.resolve()
+        output = tmp_path / "served"
+        output.mkdir()
+        publish_staging(staging, output)
+
+        assert (output / "videos" / "test.mp4").exists()
+        assert (output / "thumbs" / "test.jpg").exists()
+        assert (output / "manifest.json").exists()
+
+    def test_works_on_existing_output_dir(self, tmp_path):
+        """Publishing to an existing dir with content should not fail."""
+        staging = tmp_path / "staging"
+        (staging / "videos").mkdir(parents=True)
+        (staging / "thumbs").mkdir()
+        (staging / "covers").mkdir()
+        (staging / "videos" / "new.mp4").write_bytes(b"\x00" * 100)
+
+        output = tmp_path / "served"
+        (output / "videos").mkdir(parents=True)
+        (output / "videos" / "old.mp4").write_bytes(b"\x00" * 50)
+
+        publish_staging(staging, output)
+        assert (output / "videos" / "new.mp4").exists()
+        assert (output / "videos" / "old.mp4").exists()
 
 
 # --- Cover copy ---

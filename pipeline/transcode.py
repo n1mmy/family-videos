@@ -129,9 +129,13 @@ def transcode_one(mkv_path, mp4_path):
         return True
     except subprocess.TimeoutExpired:
         log.error("ffmpeg timed out for %s", mkv_path.name)
+        if mp4_path.exists():
+            mp4_path.unlink()
         return False
     except Exception as e:
         log.error("ffmpeg error for %s: %s", mkv_path.name, e)
+        if mp4_path.exists():
+            mp4_path.unlink()
         return False
 
 
@@ -216,8 +220,8 @@ def copy_cover(dvd_dir, covers_dir, dvd_name):
 def process_one_title(args):
     """Process a single MKV title: transcode + thumbnail.
 
-    Args is a tuple: (mkv_path, mp4_path, thumb_path, dry_run)
-    Returns a dict with status info, or None on skip/error.
+    Args is a tuple: (mkv_path, mp4_path, thumb_path, duration, dry_run)
+    Returns a dict with status info.
     """
     mkv_path, mp4_path, thumb_path, duration, dry_run = args
 
@@ -290,33 +294,38 @@ def write_manifest_atomic(manifest, target_path):
         raise
 
 
-# --- Symlink swap ---
+# --- Publish ---
 
 
-def swap_symlink(staging_dir, served_link):
-    """Atomically swap the served symlink to point to staging.
+def publish_staging(staging_dir, output_dir):
+    """Publish staged content to the output directory.
 
-    If served_link doesn't exist, creates it.
-    If it's a real directory (unexpected), renames it aside.
+    Copies videos, thumbs, covers, and manifest from staging into the
+    output directory. Uses the atomic manifest write as the commit point.
+    Works on both local filesystems and k8s PVC mounts.
     """
-    served_link = Path(served_link)
     staging_dir = Path(staging_dir)
+    output_dir = Path(output_dir)
 
-    if served_link.exists() and not served_link.is_symlink():
-        backup = served_link.with_suffix(".bak")
-        log.warning("served_link is a real directory, moving to %s", backup)
-        os.rename(str(served_link), str(backup))
+    # Ensure output subdirectories exist
+    for subdir in ("videos", "thumbs", "covers"):
+        (output_dir / subdir).mkdir(parents=True, exist_ok=True)
 
-    if not served_link.exists() and not served_link.is_symlink():
-        os.symlink(str(staging_dir), str(served_link))
-        return
+    # Copy assets from staging to output (skip manifest for now)
+    for subdir in ("videos", "thumbs", "covers"):
+        src = staging_dir / subdir
+        dst = output_dir / subdir
+        for f in src.iterdir():
+            if f.is_file():
+                shutil.copy2(f, dst / f.name)
 
-    # Atomic swap: create temp symlink, then rename over the old one
-    tmp_link = str(served_link) + ".tmp"
-    if os.path.islink(tmp_link):
-        os.unlink(tmp_link)
-    os.symlink(str(staging_dir), tmp_link)
-    os.rename(tmp_link, str(served_link))
+    # Atomic manifest write is the publish signal
+    manifest_src = staging_dir / "manifest.json"
+    if manifest_src.exists():
+        write_manifest_atomic(
+            json.load(open(manifest_src)),
+            output_dir / "manifest.json",
+        )
 
 
 # --- Main ---
@@ -341,15 +350,15 @@ def run_pipeline(input_dir, output_dir, overrides_path, schema_path, dry_run, mi
     elif overrides_path:
         log.warning("Overrides file not found: %s", overrides_path)
 
-    # Set up staging
-    staging_base = output_dir.parent / "staging"
-    if staging_base.exists():
-        shutil.rmtree(staging_base)
-    staging_base.mkdir()
+    # Set up staging (unique dir to avoid clobbering concurrent runs)
+    staging_base = Path(tempfile.mkdtemp(
+        dir=str(output_dir.parent),
+        prefix="staging-",
+    ))
     prepare_staging(staging_base)
 
-    # Copy existing served content to staging
-    if output_dir.exists():
+    # Copy existing served content to staging (preserves previously transcoded files)
+    if output_dir.exists() and output_dir.is_dir():
         copy_served_to_staging(output_dir, staging_base)
 
     # Walk DVD directories
@@ -435,9 +444,8 @@ def run_pipeline(input_dir, output_dir, overrides_path, schema_path, dry_run, mi
         log.info("Transcoding %d titles with %d workers", len(work_items), max_workers)
 
         with ProcessPoolExecutor(max_workers=max_workers) as pool:
-            futures = {pool.submit(process_one_title, item): i for i, item in enumerate(work_items)}
+            futures = [pool.submit(process_one_title, item) for item in work_items]
             for future in as_completed(futures):
-                idx = futures[future]
                 try:
                     result = future.result()
                     if result is None:
@@ -465,8 +473,10 @@ def run_pipeline(input_dir, output_dir, overrides_path, schema_path, dry_run, mi
     if not dry_run:
         validate_manifest(manifest, schema_path)
         write_manifest_atomic(manifest, staging_base / "manifest.json")
-        swap_symlink(staging_base, output_dir)
+        publish_staging(staging_base, output_dir)
         log.info("Published to %s", output_dir)
+        # Clean up staging
+        shutil.rmtree(staging_base, ignore_errors=True)
 
     # Summary
     print_summary(
@@ -477,6 +487,9 @@ def run_pipeline(input_dir, output_dir, overrides_path, schema_path, dry_run, mi
         dry_run,
         len(video_entries),
     )
+    if counters["errors"] > 0:
+        log.error("%d transcode errors occurred", counters["errors"])
+        return 1
     return 0
 
 
@@ -506,7 +519,16 @@ def main():
         format="%(asctime)s %(levelname)s %(message)s",
     )
 
-    schema_path = args.schema or str(Path(__file__).resolve().parent.parent / "manifest.schema.json")
+    # In Docker, schema is at /app/manifest.schema.json (same dir as script).
+    # In dev, schema is at repo root (parent of pipeline/).
+    script_dir = Path(__file__).resolve().parent
+    schema_path = args.schema
+    if not schema_path:
+        candidate = script_dir / "manifest.schema.json"
+        if candidate.exists():
+            schema_path = str(candidate)
+        else:
+            schema_path = str(script_dir.parent / "manifest.schema.json")
 
     sys.exit(run_pipeline(
         args.input_dir,

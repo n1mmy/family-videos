@@ -8,6 +8,7 @@
   --accent-hover: #B07A32;
   --border: #E8E2DA;
   --overlay: rgba(26, 22, 18, 0.92);
+  --badge-bg: rgba(26, 22, 18, 0.78);
   --shadow-card: 0 1px 3px rgba(44,36,32,0.06), 0 1px 2px rgba(44,36,32,0.04);
   --shadow-elevated: 0 4px 12px rgba(44,36,32,0.08), 0 2px 4px rgba(44,36,32,0.04);
 
@@ -40,6 +41,7 @@
     --accent-hover: #E0B35C;
     --border: #4A4139;
     --overlay: rgba(26, 22, 18, 0.95);
+    --badge-bg: rgba(0, 0, 0, 0.82);
     --shadow-card: 0 1px 3px rgba(0,0,0,0.15), 0 1px 2px rgba(0,0,0,0.1);
     --shadow-elevated: 0 4px 12px rgba(0,0,0,0.2), 0 2px 4px rgba(0,0,0,0.1);
   }
@@ -461,7 +463,7 @@ body {
   position: absolute;
   bottom: var(--space-sm);
   right: var(--space-sm);
-  background: rgba(26, 22, 18, 0.75);
+  background: var(--badge-bg);
   color: #FFFFFF;
   font-family: 'DM Sans', -apple-system, sans-serif;
   font-size: 11px;

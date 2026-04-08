@@ -1,0 +1,126 @@
+{
+  "title": "Family Videos",
+  "dateRange": { "start": "1979", "end": "2006" },
+  "videos": [
+    {
+      "id": "197902-198201-title00",
+      "title": "Feb 1979 \u2013 Jan 1982",
+      "dateStart": "1979-02",
+      "dateEnd": "1982-01",
+      "duration": 6135,
+      "file": "videos/197902-198201-title00.mp4",
+      "thumbnail": "thumbs/197902-198201-title00.jpg",
+      "cover": "covers/197902-198201.jpg",
+      "dvd": "197902-198201",
+      "sourceFile": "197902-198201/title00.mkv"
+    },
+    {
+      "id": "197902-198201-title01",
+      "title": "Feb 1979 \u2013 Jan 1982 (Part 2)",
+      "dateStart": "1979-02",
+      "dateEnd": "1982-01",
+      "duration": 4820,
+      "file": "videos/197902-198201-title01.mp4",
+      "thumbnail": "thumbs/197902-198201-title01.jpg",
+      "cover": "covers/197902-198201.jpg",
+      "dvd": "197902-198201",
+      "sourceFile": "197902-198201/title01.mkv"
+    },
+    {
+      "id": "19830811-19831212-title00",
+      "title": "Aug 1983 \u2013 Dec 1983",
+      "dateStart": "1983-08",
+      "dateEnd": "1983-12",
+      "duration": 3612,
+      "file": "videos/19830811-19831212-title00.mp4",
+      "thumbnail": "thumbs/19830811-19831212-title00.jpg",
+      "cover": "covers/19830811-19831212.jpg",
+      "dvd": "19830811-19831212",
+      "sourceFile": "19830811-19831212/title00.mkv"
+    },
+    {
+      "id": "1994-birthday-title00",
+      "title": "Birthday 1994",
+      "dateStart": "1994",
+      "dateEnd": "1994",
+      "duration": 2745,
+      "file": "videos/1994-birthday-title00.mp4",
+      "thumbnail": "thumbs/1994-birthday-title00.jpg",
+      "cover": "covers/1994-birthday.jpg",
+      "dvd": "1994-birthday",
+      "sourceFile": "1994-birthday/title00.mkv"
+    },
+    {
+      "id": "1997-trip-cross-country-title00",
+      "title": "Cross Country Trip (Part 1)",
+      "dateStart": "1997",
+      "dateEnd": "1997",
+      "duration": 5490,
+      "file": "videos/1997-trip-cross-country-title00.mp4",
+      "thumbnail": "thumbs/1997-trip-cross-country-title00.jpg",
+      "cover": "covers/1997-trip-cross-country.jpg",
+      "dvd": "1997-trip-cross-country",
+      "sourceFile": "1997-trip-cross-country/title00.mkv"
+    },
+    {
+      "id": "1997-trip-cross-country-title01",
+      "title": "Cross Country Trip (Part 2)",
+      "dateStart": "1997",
+      "dateEnd": "1997",
+      "duration": 3870,
+      "file": "videos/1997-trip-cross-country-title01.mp4",
+      "thumbnail": "thumbs/1997-trip-cross-country-title01.jpg",
+      "cover": "covers/1997-trip-cross-country.jpg",
+      "dvd": "1997-trip-cross-country",
+      "sourceFile": "1997-trip-cross-country/title01.mkv"
+    },
+    {
+      "id": "christmas-04-05-06-title00",
+      "title": "Christmas 2004",
+      "dateStart": "2004-12",
+      "dateEnd": "2006-12",
+      "duration": 4215,
+      "file": "videos/christmas-04-05-06-title00.mp4",
+      "thumbnail": "thumbs/christmas-04-05-06-title00.jpg",
+      "cover": "covers/christmas-04-05-06.jpg",
+      "dvd": "christmas-04-05-06",
+      "sourceFile": "christmas-04-05-06/title00.mkv"
+    },
+    {
+      "id": "christmas-04-05-06-title01",
+      "title": "Christmas 2005",
+      "dateStart": "2004-12",
+      "dateEnd": "2006-12",
+      "duration": 2980,
+      "file": "videos/christmas-04-05-06-title01.mp4",
+      "thumbnail": "thumbs/christmas-04-05-06-title01.jpg",
+      "cover": "covers/christmas-04-05-06.jpg",
+      "dvd": "christmas-04-05-06",
+      "sourceFile": "christmas-04-05-06/title01.mkv"
+    },
+    {
+      "id": "christmas-04-05-06-title02",
+      "title": "Christmas 2006",
+      "dateStart": "2004-12",
+      "dateEnd": "2006-12",
+      "duration": 1560,
+      "file": "videos/christmas-04-05-06-title02.mp4",
+      "thumbnail": "thumbs/christmas-04-05-06-title02.jpg",
+      "cover": "covers/christmas-04-05-06.jpg",
+      "dvd": "christmas-04-05-06",
+      "sourceFile": "christmas-04-05-06/title02.mkv"
+    },
+    {
+      "id": "unknown-tape-title00",
+      "title": "Unknown Tape",
+      "dateStart": null,
+      "dateEnd": null,
+      "duration": 3300,
+      "file": "videos/unknown-tape-title00.mp4",
+      "thumbnail": "thumbs/unknown-tape-title00.jpg",
+      "cover": "covers/unknown-tape.jpg",
+      "dvd": "unknown-tape",
+      "sourceFile": "unknown-tape/title00.mkv"
+    }
+  ]
+}

@@ -52,14 +52,10 @@ class TestParseDirname:
         assert result["years"] is None
 
     def test_invalid_month_falls_through(self):
-        """YYYYMMDD with invalid month (13) should not match Pattern 1."""
+        """YYYYMMDD with invalid month (13) falls through to fallback."""
         result = parse_dirname("19831301-19831401")
-        # Should fall through — not a valid YYYYMMDD range
-        assert result["dateStart"] is not None or result["dateStart"] is None
-        # Must not parse as month 13
-        if result["dateStart"] is not None:
-            month = int(result["dateStart"].split("-")[1])
-            assert 1 <= month <= 12
+        assert result["dateStart"] is None
+        assert result["dateEnd"] is None
 
     def test_single_trailing_year(self):
         """label-YY with a single 2-digit year suffix."""
@@ -81,6 +77,118 @@ class TestParseDirname:
         assert result["dateStart"] == "1989-12-25"
         assert result["dateEnd"] == "1990-01-15"
         assert result["years"] == [1989, 1990]
+
+    def test_single_yyyymmdd(self):
+        """Bare YYYYMMDD (single day, no range)."""
+        result = parse_dirname("19940328")
+        assert result["dateStart"] == "1994-03-28"
+        assert result["dateEnd"] is None
+        assert result["title"] is None
+        assert result["years"] == [1994]
+
+    def test_single_yyyymmdd_with_label(self):
+        """YYYYMMDD followed by a descriptive label."""
+        result = parse_dirname("20120728-nickjen-reception")
+        assert result["dateStart"] == "2012-07-28"
+        assert result["dateEnd"] is None
+        assert result["title"] == "nickjen reception"
+        assert result["years"] == [2012]
+
+    def test_yyyymmdd_range_with_label(self):
+        """YYYYMMDD-YYYYMMDD followed by a descriptive label."""
+        result = parse_dirname("20020702-20021225-alaskan-cruise-pt2")
+        assert result["dateStart"] == "2002-07-02"
+        assert result["dateEnd"] == "2002-12-25"
+        assert result["title"] == "alaskan cruise pt2"
+        assert result["years"] == [2002]
+
+    def test_single_yyyymm_with_label(self):
+        """Bare YYYYMM followed by a descriptive label."""
+        result = parse_dirname("200107-hawaii-pt2")
+        assert result["dateStart"] == "2001-07"
+        assert result["dateEnd"] is None
+        assert result["title"] == "hawaii pt2"
+        assert result["years"] == [2001]
+
+    def test_single_yyyymm_bare(self):
+        """Bare YYYYMM with no label — single month, no title."""
+        result = parse_dirname("199702")
+        assert result["dateStart"] == "1997-02"
+        assert result["dateEnd"] is None
+        assert result["title"] is None
+        assert result["years"] == [1997]
+
+    def test_yyyymm_range_with_label(self):
+        """YYYYMM-YYYYMM followed by a descriptive label."""
+        result = parse_dirname("197807-197902-our-wedding")
+        assert result["dateStart"] == "1978-07"
+        assert result["dateEnd"] == "1979-02"
+        assert result["title"] == "our wedding"
+        assert result["years"] == [1978, 1979]
+
+    def test_typo_7digit_second_date_falls_through(self):
+        """Mangled 7-digit end date (leading zero dropped) should not
+        be swallowed as a bogus label. The user can override via
+        overrides.json or rename the directory."""
+        result = parse_dirname("19881123-1989325")
+        assert result["dateStart"] is None
+        assert result["dateEnd"] is None
+
+    def test_single_yyyymmdd_invalid_month(self):
+        """Single YYYYMMDD with month 13 falls through to fallback."""
+        result = parse_dirname("20121301")
+        assert result["dateStart"] is None
+
+    def test_single_yyyymmdd_invalid_day(self):
+        """Valid month but impossible day (June 31) falls through."""
+        result = parse_dirname("19990631")
+        # sm=06 is valid, sd=31 is not (June has 30 days). The old
+        # naive ``1 <= sd <= 31`` guard accepted this and emitted
+        # ``1999-06-31``, which broke the frontend date parser.
+        assert result["dateStart"] is None
+
+    def test_single_yyyymmdd_feb_30(self):
+        """Feb 30 is impossible — falls through."""
+        result = parse_dirname("19990230")
+        assert result["dateStart"] is None
+
+    def test_single_yyyymmdd_leap_year_feb_29(self):
+        """Feb 29 on a leap year is valid."""
+        result = parse_dirname("20000229")
+        assert result["dateStart"] == "2000-02-29"
+
+    def test_single_yyyymmdd_non_leap_year_feb_29(self):
+        """Feb 29 on a non-leap year falls through."""
+        result = parse_dirname("19990229")
+        assert result["dateStart"] is None
+
+    def test_year_zero_falls_through(self):
+        """Year 0 (nonsensical) falls through — we cap at 1900."""
+        result = parse_dirname("00000101")
+        assert result["dateStart"] is None
+        result = parse_dirname("0000-trip")
+        assert result["dateStart"] is None
+
+    def test_date_range_end_before_start(self):
+        """Range with end before start falls through — likely a typo."""
+        result = parse_dirname("19901231-19900101")
+        assert result["dateStart"] is None
+
+    def test_label_with_digit_prefix_rejected(self):
+        """A ``label'' that begins with a digit is almost always a
+        mangled date token. ``20010101-20020102x`` should NOT parse
+        as a single day 2001-01-01 with title "20020102x" — the user
+        meant a range and we silently losing the end date would be
+        worse than rejecting the whole name.
+        """
+        result = parse_dirname("20010101-20020102x")
+        assert result["dateStart"] is None
+
+    def test_label_with_double_dash_collapsed(self):
+        """``20010101--double`` should not produce a leading-space title."""
+        result = parse_dirname("20010101--double")
+        assert result["dateStart"] == "2001-01-01"
+        assert result["title"] == "double"
 
 
 # --- Title generation ---

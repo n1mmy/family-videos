@@ -385,6 +385,7 @@ function syncYearDisplay(year) {
   var spine = $('#spine-year');
   if (spine) {
     spine.textContent = year === 'undated' ? 'Undated' : year;
+    spine.classList.toggle('spine-year--undated', year === 'undated');
   }
 
   // Scrubber handle position

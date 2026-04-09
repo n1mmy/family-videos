@@ -97,18 +97,22 @@ Real filename patterns observed:
 
 | Pattern | Example | Parse |
 |---------|---------|-------|
-| `YYYYMMDD-YYYYMMDD` | `19830811-19831212` | dateStart=1983-08-11, dateEnd=1983-12-12 |
-| `YYYYMM-YYYYMM` | `197902-198201` | dateStart=1979-02, dateEnd=1982-01 |
+| `YYYYMMDD-YYYYMMDD[-label]` | `20020702-20021225-alaskan-cruise-pt2` | dateStart=2002-07-02, dateEnd=2002-12-25, title="alaskan cruise pt2" |
+| `YYYYMMDD[-label]` | `20120728-nickjen-reception` | dateStart=2012-07-28, title="nickjen reception" |
+| `YYYYMM-YYYYMM[-label]` | `197807-197902-our-wedding` | dateStart=1978-07, dateEnd=1979-02, title="our wedding" |
+| `YYYYMM[-label]` | `200107-hawaii-pt2` | dateStart=2001-07, title="hawaii pt2" |
 | `YYYY-label` | `1997-trip-cross-country-pt2-plusplus` | dateStart=1997, title="trip cross country pt2 plusplus" |
 | `label-YY-YY-YY` | `christmas-04-05-06` | title="christmas", years=[2004,2005,2006] |
 | Unparseable | anything else | dateStart=null, title=filename stem |
 
 Parser logic:
-1. Try `(\d{8})-(\d{8})` → YYYYMMDD range
-2. Try `(\d{6})-(\d{6})` → YYYYMM range
+1. Try `(\d{8})(?:-(\d{8}))?(?:-(.+))?` → single day or day range, optional `-label` suffix
+2. Try `(\d{6})(?:-(\d{6}))?(?:-(.+))?` → single month or month range, optional `-label` suffix
 3. Try `(\d{4})-(.+)` → year + label
 4. Try text + short year patterns → label + years
 5. Fallback → null dates, stem as title
+
+**Validation (v0.2.1.0+):** Dates are validated via `datetime.date()` so impossible days (Feb 30, Jun 31, Feb 29 in non-leap years) are rejected rather than silently producing invalid YYYY-MM-DD strings. Years are clamped to `[1900, current_year+5]`. Date ranges with end before start fall through. Labels whose first character is a digit are rejected as likely mangled date tokens (e.g. `20010101-20020102x` — the user almost certainly meant a range, not a single day with title `20020102x`).
 
 **Override file** (`overrides.json`): keyed by directory name OR `directory/titleNN` for per-title overrides. Mounted as k8s ConfigMap (not baked into image).
 ```json

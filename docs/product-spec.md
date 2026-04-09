@@ -114,8 +114,10 @@ Source directories (from MakeMKV output) are named by date range. Real patterns 
 
 | Pattern | Example | Parse |
 |---------|---------|-------|
-| `YYYYMMDD-YYYYMMDD` | `19830811-19831212` | dateStart=1983-08-11, dateEnd=1983-12-12 |
-| `YYYYMM-YYYYMM` | `197902-198201` | dateStart=1979-02, dateEnd=1982-01 |
+| `YYYYMMDD-YYYYMMDD[-label]` | `20020702-20021225-alaskan-cruise-pt2` | dateStart=2002-07-02, dateEnd=2002-12-25, title="alaskan cruise pt2" |
+| `YYYYMMDD[-label]` | `20120728-nickjen-reception` | dateStart=2012-07-28, title="nickjen reception" |
+| `YYYYMM-YYYYMM[-label]` | `197807-197902-our-wedding` | dateStart=1978-07, dateEnd=1979-02, title="our wedding" |
+| `YYYYMM[-label]` | `200107-hawaii-pt2` | dateStart=2001-07, title="hawaii pt2" |
 | `YYYY-label` | `1997-trip-cross-country-pt2-plusplus` | dateStart=1997, title from label |
 | `label-YY-YY-YY` | `christmas-04-05-06` | title="christmas", years=[2004,2005,2006] |
 | Unparseable | anything else | dateStart=null, title=directory name |
@@ -223,7 +225,7 @@ A wireframe sketch showing three states (auth dialog, timeline browser with DVD-
 3. **HTTPS/domain:** Already handled on the k8s cluster with TLS-enabled ingress. ✓ Resolved.
 4. **Storage size:** Ceph PVCs on existing cluster. Pipeline includes pre-flight disk space check. Staging requires ~2x served directory temporarily. ✓ Resolved.
 5. **Remote access mechanism:** Existing ingress controller with TLS. ✓ Resolved.
-6. **Filename format:** Real patterns discovered: `YYYYMMDD-YYYYMMDD`, `YYYYMM-YYYYMM`, `YYYY-label`, `label-YY-YY-YY`. Parser handles all four + fallback. ✓ Resolved in eng review.
+6. **Filename format:** Real patterns discovered: `YYYYMMDD[-YYYYMMDD][-label]`, `YYYYMM[-YYYYMM][-label]`, `YYYY-label`, `label-YY-YY-YY`. Parser handles all four families + optional `-label` suffix + fallback, validates via `datetime.date` (rejects Feb 30, Jun 31, etc.), clamps years to `[1900, current_year+5]`, and rejects digit-leading labels as likely mangled dates. ✓ Resolved in eng review, expanded in v0.2.1.0.
 
 ## Success Criteria
 

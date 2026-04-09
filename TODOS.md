@@ -63,6 +63,13 @@ The scrubber drag-session cache (`dragCache` in `initScrubberDrag`) snapshots la
 **Priority:** P3
 **Depends on:** Real perf measurement on a representative large archive.
 
+### Override for the `19881123-1989325` 7-digit typo DVD
+The v0.2.1.0 parser fixes recovered 6 of 7 previously-undated DVDs. The seventh (`19881123-1989325`) has a 7-digit second date where the user dropped a leading zero on the month (`1989325` = `1989-3-25`). The parser deliberately doesn't guess at mangled dates — add an explicit override in `overrides.json` mapping this DVD to the intended `1988-11-23` – `1989-03-25` range.
+
+**Context:** Adversarial review considered a YYYYMDD (single-digit month) fallback but rejected it — it would risk mis-parsing legitimate garbage strings. Override is the right tool here. 1 DVD.
+**Priority:** P3
+**Depends on:** Nothing.
+
 ### Reduce 2-second programmatic-scroll guard ceiling
 `scrollToYearSection` sets a 2000ms guard so the IntersectionObserver doesn't ping-pong during in-flight smooth scrolls. The native `scrollend` event clears it early on Chromium/Firefox, but Safari < 18 has no `scrollend` and pays the full 2 seconds. During those 2 seconds the scroll-spy is dead — if the user scrolls manually they don't see the spine update until the timer expires.
 

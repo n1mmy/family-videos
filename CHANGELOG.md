@@ -2,6 +2,19 @@
 
 All notable changes to Family Videos will be documented in this file.
 
+## [0.2.1.0] - 2026-04-08
+
+### Fixed
+- **"Undated" no longer overflows the year sidebar.** The spine was sized for 4-digit years (`clamp(140px, 14vw, 220px)` Instrument Serif) and "Undated" punched ~280px out of the 280px-wide rail, trampling the content column. A new `.spine-year--undated` modifier renders the label at `clamp(40px, 4.5vw, 56px)` italic muted — so it reads as a category label rather than a mislabeled year — and toggles on in lockstep with the spine text in `syncYearDisplay`. Mobile override at 32px so it still fits in a narrow banner.
+- **Videos with dates in the filename no longer fall into Undated.** The DVD directory parser only understood explicit ranges (`YYYYMMDD-YYYYMMDD`, `YYYYMM-YYYYMM`, `YYYY-label`, `label-YY-YY`). Anything else — a single day like `19940328`, a single month like `200107-hawaii-pt2`, a labelled range like `20020702-20021225-alaskan-cruise-pt2`, or a labelled single date like `20120728-nickjen-reception` — silently landed in Undated. Pattern 1 and Pattern 2 now accept single dates and an optional `-label` suffix on ranges, recovering 6 of 7 previously-undated DVDs. The seventh (`19881123-1989325`, a 7-digit typo) still falls through and needs an override — that's intentional, we don't guess at mangled dates.
+
+### Changed
+- **Parser now validates real calendar dates via `datetime.date`.** The previous `1 <= sd <= 31` guard accepted `19990631` (June 31), `19990230` (Feb 30), and Feb 29 in non-leap years, emitting strings like `1999-06-31` that broke the frontend date parser. Invalid dates fall through to the next pattern instead.
+- **Parser rejects dates outside `[1900, current_year+5]`** matching the frontend's `deriveYearRangeFromVideos` clamp. Year 0 (`00000101`, `0000-trip`) no longer parses.
+- **Date ranges with end before start** (`19901231-19900101`) now fall through instead of silently inverting.
+- **Labels starting with a digit are rejected as likely mangled dates.** `20010101-20020102x` used to parse as a single day with title `20020102x`, silently dropping the user's intended 2002 end date. Caught by adversarial review.
+- **Multi-dash fragments in labels** (`20010101--double`, trailing dash) are now collapsed with split/filter/join so titles don't pick up leading or double spaces.
+
 ## [0.2.0.0] - 2026-04-08
 
 ### Added

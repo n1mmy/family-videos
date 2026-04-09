@@ -239,6 +239,42 @@ class TestParseDirname:
         assert result["dateEnd"] is None
         assert result["years"] == [1995]
 
+    def test_year_token_with_day_token(self):
+        """4-digit YYYY token alongside an 8-digit day token. Exercises
+        the year branch of _parse_date_token inside Pattern 4.5."""
+        result = parse_dirname("1983-19830806")
+        assert result["dateStart"] == "1983"
+        assert result["dateEnd"] == "1983-08-06"
+        assert result["years"] == [1983]
+
+    def test_two_year_tokens_multi_year_range(self):
+        """Two bare 4-digit year tokens — the only fallback that handles
+        this, since Pattern 3 requires an alpha label."""
+        result = parse_dirname("1985-1990")
+        assert result["dateStart"] == "1985"
+        assert result["dateEnd"] == "1990"
+        assert result["years"] == [1985, 1986, 1987, 1988, 1989, 1990]
+
+    def test_out_of_range_year_token_dropped(self):
+        """Below-floor 4-digit token sits next to a valid 8-digit token.
+        _parse_date_token rejects the 1800 and Pattern 4.5 anchors on
+        what remains."""
+        result = parse_dirname("1800-19830806")
+        assert result["dateStart"] == "1983-08-06"
+        assert result["dateEnd"] is None
+        assert result["years"] == [1983]
+
+    def test_all_tokens_out_of_range_falls_through(self):
+        """Every token rejected by _parse_date_token → Pattern 4.5 drops
+        to Pattern 5, landing the DVD in the undated bucket. Guards
+        against a future regression that accidentally returns a
+        best-effort result from an empty valid list."""
+        result = parse_dirname("1800-9999")
+        assert result["dateStart"] is None
+        assert result["dateEnd"] is None
+        assert result["title"] == "1800-9999"
+        assert result["years"] is None
+
 
 # --- Title generation ---
 

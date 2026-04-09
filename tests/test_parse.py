@@ -126,13 +126,15 @@ class TestParseDirname:
         assert result["title"] == "our wedding"
         assert result["years"] == [1978, 1979]
 
-    def test_typo_7digit_second_date_falls_through(self):
-        """Mangled 7-digit end date (leading zero dropped) should not
-        be swallowed as a bogus label. The user can override via
-        overrides.json or rename the directory."""
+    def test_typo_7digit_second_date_degrades_to_first(self):
+        """Mangled 7-digit end date (leading zero dropped) should degrade
+        to just the valid first token rather than sending the whole video
+        to the undated bucket. The multi-token fallback keeps whatever
+        dates parse so the video still anchors on the timeline."""
         result = parse_dirname("19881123-1989325")
-        assert result["dateStart"] is None
+        assert result["dateStart"] == "1988-11-23"
         assert result["dateEnd"] is None
+        assert result["years"] == [1988]
 
     def test_single_yyyymmdd_invalid_month(self):
         """Single YYYYMMDD with month 13 falls through to fallback."""
@@ -169,10 +171,16 @@ class TestParseDirname:
         result = parse_dirname("0000-trip")
         assert result["dateStart"] is None
 
-    def test_date_range_end_before_start(self):
-        """Range with end before start falls through — likely a typo."""
+    def test_date_range_end_before_start_normalized(self):
+        """Transposed range (end < start) normalizes to min/max via the
+        multi-token fallback. The old behavior rejected the whole name,
+        which dumped the video into the undated bucket even though both
+        dates were perfectly valid — the user just typed them in the
+        wrong order."""
         result = parse_dirname("19901231-19900101")
-        assert result["dateStart"] is None
+        assert result["dateStart"] == "1990-01-01"
+        assert result["dateEnd"] == "1990-12-31"
+        assert result["years"] == [1990]
 
     def test_label_with_digit_prefix_rejected(self):
         """A ``label'' that begins with a digit is almost always a
@@ -189,6 +197,83 @@ class TestParseDirname:
         result = parse_dirname("20010101--double")
         assert result["dateStart"] == "2001-01-01"
         assert result["title"] == "double"
+
+    # --- Multi-token numeric fallback (Pattern 4.5) ---
+    # Five real DVD folder names from the production manifest that were
+    # landing in the undated bucket because patterns 1-2 are strict about
+    # precision, segment count, and date order. All five visually contain
+    # dates, so a best-effort parse is strictly better than "Undated".
+
+    def test_mixed_precision_month_then_day(self):
+        """YYYYMM-YYYYMMDD: first token month-precision, second day."""
+        result = parse_dirname("198303-19830806")
+        assert result["dateStart"] == "1983-03"
+        assert result["dateEnd"] == "1983-08-06"
+        assert result["years"] == [1983]
+
+    def test_mixed_precision_day_then_month(self):
+        """YYYYMMDD-YYYYMM: first token day-precision, second month."""
+        result = parse_dirname("20000708-200107")
+        assert result["dateStart"] == "2000-07-08"
+        assert result["dateEnd"] == "2001-07"
+        assert result["years"] == [2000, 2001]
+
+    def test_transposed_yyyymmdd_same_month(self):
+        """Two valid YYYYMMDD tokens, end before start — normalizes."""
+        result = parse_dirname("19841223-19841215")
+        assert result["dateStart"] == "1984-12-15"
+        assert result["dateEnd"] == "1984-12-23"
+        assert result["years"] == [1984]
+
+    def test_three_yyyymmdd_tokens(self):
+        """Three YYYYMMDD segments — use earliest + latest as the range."""
+        result = parse_dirname("19980620-19981204-19990504")
+        assert result["dateStart"] == "1998-06-20"
+        assert result["dateEnd"] == "1999-05-04"
+        assert result["years"] == [1998, 1999]
+
+    def test_second_token_invalid_month(self):
+        """Second token has month 19 (impossible) — degrade to first."""
+        result = parse_dirname("19950729-19951928")
+        assert result["dateStart"] == "1995-07-29"
+        assert result["dateEnd"] is None
+        assert result["years"] == [1995]
+
+    def test_year_token_with_day_token(self):
+        """4-digit YYYY token alongside an 8-digit day token. Exercises
+        the year branch of _parse_date_token inside Pattern 4.5."""
+        result = parse_dirname("1983-19830806")
+        assert result["dateStart"] == "1983"
+        assert result["dateEnd"] == "1983-08-06"
+        assert result["years"] == [1983]
+
+    def test_two_year_tokens_multi_year_range(self):
+        """Two bare 4-digit year tokens — the only fallback that handles
+        this, since Pattern 3 requires an alpha label."""
+        result = parse_dirname("1985-1990")
+        assert result["dateStart"] == "1985"
+        assert result["dateEnd"] == "1990"
+        assert result["years"] == [1985, 1986, 1987, 1988, 1989, 1990]
+
+    def test_out_of_range_year_token_dropped(self):
+        """Below-floor 4-digit token sits next to a valid 8-digit token.
+        _parse_date_token rejects the 1800 and Pattern 4.5 anchors on
+        what remains."""
+        result = parse_dirname("1800-19830806")
+        assert result["dateStart"] == "1983-08-06"
+        assert result["dateEnd"] is None
+        assert result["years"] == [1983]
+
+    def test_all_tokens_out_of_range_falls_through(self):
+        """Every token rejected by _parse_date_token → Pattern 4.5 drops
+        to Pattern 5, landing the DVD in the undated bucket. Guards
+        against a future regression that accidentally returns a
+        best-effort result from an empty valid list."""
+        result = parse_dirname("1800-9999")
+        assert result["dateStart"] is None
+        assert result["dateEnd"] is None
+        assert result["title"] == "1800-9999"
+        assert result["years"] is None
 
 
 # --- Title generation ---

@@ -501,37 +501,74 @@ function initScrubberDrag() {
   var handle = $('.scrubber-handle');
   var track = $('.scrubber-track');
 
-  // Drag-session cache: snapshot every content label's center X plus
-  // the track rect at mousedown so onMove does ZERO layout reads per
-  // pointer move. Without this, the previous tick's `handle.style.left`
-  // write forces a synchronous layout flush on the next read — classic
-  // read-after-write thrash that visibly janks drag on slower hardware.
+  // Drag-session cache: snapshot every content label's center in
+  // rail-relative (scroll-invariant) coordinates at mousedown so onMove
+  // does at most one layout read per pointer move. Without this, the
+  // previous tick's `handle.style.left` write forces a synchronous
+  // layout flush on the next read — classic read-after-write thrash
+  // that visibly janks drag on slower hardware.
+  //
+  // Rail-relative instead of viewport-relative is load-bearing: when
+  // the drag auto-scrolls the scrubber (see ensureLabelVisible below)
+  // to chase an off-screen year, every label's viewport X shifts, but
+  // its rail-relative X stays put. Viewport-cached centers would go
+  // stale on the first auto-scroll and send the handle to the wrong year.
   var dragCache = null;
 
   function buildDragCache() {
-    var cache = { years: [], centers: [] };
+    var scrubber = $('.timeline-scrubber');
+    var sr = scrubber.getBoundingClientRect();
+    var sl = scrubber.scrollLeft;
+    var cache = { scrubberEl: scrubber, years: [], railCenters: [] };
     for (var year in state.labelByYear) {
       if (!Object.prototype.hasOwnProperty.call(state.labelByYear, year)) continue;
       var lr = state.labelByYear[year].getBoundingClientRect();
+      // Rail-relative X = viewport center - scrubber viewport left + scrubber scroll.
+      // Both terms shift by the same delta when the scrubber scrolls, so
+      // this value is scroll-invariant.
+      cache.railCenters.push((lr.left + lr.width / 2) - sr.left + sl);
       cache.years.push(year === 'undated' ? 'undated' : parseInt(year, 10));
-      cache.centers.push(lr.left + lr.width / 2);
     }
     return cache;
   }
 
-  // Find the content-year whose cached center is closest to the pointer.
-  // Gaps are absent from state.labelByYear, so dragging always snaps to
-  // a real content year even when the pointer lands visually on a "···".
+  // Find the content-year whose rail-relative center is closest to the
+  // pointer. Gaps are absent from state.labelByYear, so dragging always
+  // snaps to a real content year even when the pointer lands visually
+  // on a "···".
   function getYearFromPointer(clientX) {
     var cache = dragCache || buildDragCache();
-    if (cache.centers.length === 0) return null;
+    if (cache.railCenters.length === 0) return null;
+    // One layout read per tick — converts clientX into the same
+    // rail-relative coordinate space as cache.railCenters.
+    var srLeft = cache.scrubberEl.getBoundingClientRect().left;
+    var pointerRailX = clientX - srLeft + cache.scrubberEl.scrollLeft;
     var bestIdx = -1;
     var bestDist = Infinity;
-    for (var i = 0; i < cache.centers.length; i++) {
-      var d = Math.abs(clientX - cache.centers[i]);
+    for (var i = 0; i < cache.railCenters.length; i++) {
+      var d = Math.abs(pointerRailX - cache.railCenters[i]);
       if (d < bestDist) { bestDist = d; bestIdx = i; }
     }
     return bestIdx === -1 ? null : cache.years[bestIdx];
+  }
+
+  // If the target year's label is outside the visible scrubber, nudge
+  // the scrubber's horizontal scroll so the handle stays on screen.
+  // Keeps a small padding so the handle never butts up against the
+  // chevrons. Operates on scrubber.scrollLeft directly so the page
+  // document never scrolls (scrollIntoView would).
+  function ensureLabelVisible(year) {
+    var scrubber = $('.timeline-scrubber');
+    var label = state.labelByYear[year];
+    if (!scrubber || !label) return;
+    var sr = scrubber.getBoundingClientRect();
+    var lr = label.getBoundingClientRect();
+    var pad = 24;
+    if (lr.left < sr.left + pad) {
+      scrubber.scrollLeft += (lr.left - sr.left - pad);
+    } else if (lr.right > sr.right - pad) {
+      scrubber.scrollLeft += (lr.right - sr.right + pad);
+    }
   }
 
   function onMove(clientX) {
@@ -539,9 +576,12 @@ function initScrubberDrag() {
     var year = getYearFromPointer(clientX);
     if (year != null && year !== state.currentYear) {
       handle.classList.add('dragging');
-      // scroll: false during drag — onEnd handles the final scroll once,
-      // and the deferred announce/hash side effects fire there too.
+      // scroll: false during drag — onEnd handles the final page scroll
+      // once, and the deferred announce/hash side effects fire there too.
       setYear(year, { scroll: false });
+      // Keep the handle inside the visible scrubber — rail-relative
+      // cache stays valid across this scroll because it's scroll-invariant.
+      ensureLabelVisible(year);
     }
   }
 

@@ -349,6 +349,17 @@ body {
   -webkit-user-select: none;
 }
 
+/* "Undated" is a word, not a 4-digit year, and blows past the spine
+   at the year-sized clamp. Use the large-heading scale + italic muted
+   treatment so it reads as a category label rather than a mislabeled
+   year. */
+.spine-year.spine-year--undated {
+  font-size: clamp(40px, 4.5vw, 56px);
+  font-style: italic;
+  color: var(--text-muted);
+  letter-spacing: 0;
+}
+
 /* === Content Column === */
 .content-column {
   padding: var(--space-xl) var(--space-2xl) var(--space-3xl);
@@ -941,6 +952,10 @@ body {
   .spine-year {
     font-size: 72px;
     line-height: 1;
+  }
+
+  .spine-year.spine-year--undated {
+    font-size: 32px;
   }
 
   /* On mobile the spine is a pure year anchor — the top-bar chevrons

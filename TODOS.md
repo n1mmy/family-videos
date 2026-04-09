@@ -47,14 +47,6 @@ The frontend (vanilla JS/HTML/CSS) has zero automated tests. Backend `tests/` co
 **Priority:** P1
 **Depends on:** Nothing — straight bootstrap.
 
-### Drag cache invalidation on scrubber horizontal scroll
-The scrubber drag-session cache (`dragCache` in `initScrubberDrag`) snapshots label center coordinates at `mousedown`. If `.timeline-scrubber` scrolls horizontally during the drag — possible via iOS rubber-band, focus-into-view, or a programmatic `scrollIntoView` of a focused descendant — the cached centers go stale and `getYearFromPointer` snaps to wrong years.
-
-**Context:** Caught by Claude adversarial review. Edge case in practice (drag captures pointer, scrubber rarely scrolls mid-drag), but real. Fix: also cache `scrubber.scrollLeft` on mousedown and rebuild the cache whenever the scrubber emits a `scroll` event during drag.
-
-**Priority:** P3
-**Depends on:** Frontend test framework (#bootstrap-frontend-tests) so the fix can be regression-tested.
-
 ### Massive DOM at archive scale
 `renderAllSections()` renders every year section + every DVD group + every video card up front. Today's manifest (~74 videos across 20 years) keeps the full document at ~13,000px tall, which is fine. A larger archive (a few hundred videos across 40 years) would push that into territory where iPad/phone first-paint and GC pauses become noticeable.
 
@@ -63,11 +55,11 @@ The scrubber drag-session cache (`dragCache` in `initScrubberDrag`) snapshots la
 **Priority:** P3
 **Depends on:** Real perf measurement on a representative large archive.
 
-### Override for the `19881123-1989325` 7-digit typo DVD
-The v0.2.1.0 parser fixes recovered 6 of 7 previously-undated DVDs. The seventh (`19881123-1989325`) has a 7-digit second date where the user dropped a leading zero on the month (`1989325` = `1989-3-25`). The parser deliberately doesn't guess at mangled dates — add an explicit override in `overrides.json` mapping this DVD to the intended `1988-11-23` – `1989-03-25` range.
+### Override for the `19881123-1989325` 7-digit typo DVD — full range recovery
+v0.2.2.0's Pattern 4.5 fallback now anchors this DVD at `1988-11-23` (the valid first token) instead of landing it in Undated — but it loses the `1989-3-25` end date that the user *meant*. Add an explicit override in `overrides.json` mapping this DVD to the intended `1988-11-23` – `1989-03-25` range to recover the full span.
 
-**Context:** Adversarial review considered a YYYYMDD (single-digit month) fallback but rejected it — it would risk mis-parsing legitimate garbage strings. Override is the right tool here. 1 DVD.
-**Priority:** P3
+**Context:** Adversarial review considered a YYYYMDD (single-digit month) fallback but rejected it — it would risk mis-parsing legitimate garbage strings. Override is the right tool here. 1 DVD. Priority downgraded from P3 to P4 since the video is no longer silently lost, just slightly less precise.
+**Priority:** P4
 **Depends on:** Nothing.
 
 ### Reduce 2-second programmatic-scroll guard ceiling
@@ -77,3 +69,8 @@ The v0.2.1.0 parser fixes recovered 6 of 7 previously-undated DVDs. The seventh 
 
 **Priority:** P3
 **Depends on:** Nothing.
+
+## Completed
+
+### Drag cache invalidation on scrubber horizontal scroll
+**Completed:** v0.2.2.0 (2026-04-09) — rewrote the drag cache to use scroll-invariant rail-relative coordinates so cached centers stay correct even when the scrubber scrolls mid-drag (no rebuild needed). Also added `ensureLabelVisible()` which nudges `scrubber.scrollLeft` when the drag target lands on an off-screen year, so the handle never leaves the visible scrubber. Original TODO proposed rebuilding the cache on every scroll event; the invariant-coordinate approach is strictly better.

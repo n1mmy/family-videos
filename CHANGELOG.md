@@ -2,6 +2,13 @@
 
 All notable changes to Family Videos will be documented in this file.
 
+## [0.2.2.0] - 2026-04-09
+
+### Fixed
+- **Timeline drag no longer sends the handle off the visible scrubber.** When the rail was wider than the scrubber (common on narrow windows with long timelines), dragging past the right edge snapped the handle to a year whose label was off-screen — the handle visually slid out of view and you lost track of where you were. The drag cache now stores label centers in scroll-invariant rail-relative coordinates, and a new `ensureLabelVisible` nudges the scrubber's horizontal scroll so the handle stays on-screen at every step. Works on both drag directions and auto-scrolls without touching the document scroll position.
+- **Year glyph on the spine no longer overflows the vertical border line, and the overflow no longer grows with window width.** The spine-year was sized with `clamp(140px, 14vw, 220px)` — a viewport-based scale. But the spine column is fixed at 280px desktop / 200px tablet, so widening the window grew the glyph without growing the column, pushing the digits past the right border. `.spine` is now an `inline-size` container and `.spine-year` sizes itself with `60cqw` against the *column*, not the viewport. Viewport-based `clamp(90px, 10vw, 140px)` stays as a fallback for pre-2022 browsers without container query unit support.
+- **DVD names with parseable dates no longer land in the undated bucket.** Five real DVDs in the production manifest (`198303-19830806`, `19841223-19841215`, `19950729-19951928`, `19980620-19981204-19990504`, `20000708-200107`) had date-looking folder names that the strict `YYYYMMDD`/`YYYYMM` patterns rejected because of mixed precision, transposed ranges, three-or-more segments, or a single malformed token. A new "Pattern 4.5" multi-token numeric fallback splits the name on `-`, tokenizes each segment as a date, and uses the earliest/latest parseable tokens as the range — so these DVDs now anchor on their real year instead of stranding in Undated. The previous "reject on typo" stance (transposed ranges and 7-digit mangled dates dropped the whole name) flips to a best-effort parse so the video still appears on the timeline.
+
 ## [0.2.1.0] - 2026-04-08
 
 ### Fixed

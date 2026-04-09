@@ -120,6 +120,7 @@ Source directories (from MakeMKV output) are named by date range. Real patterns 
 | `YYYYMM[-label]` | `200107-hawaii-pt2` | dateStart=2001-07, title="hawaii pt2" |
 | `YYYY-label` | `1997-trip-cross-country-pt2-plusplus` | dateStart=1997, title from label |
 | `label-YY-YY-YY` | `christmas-04-05-06` | title="christmas", years=[2004,2005,2006] |
+| Multi-token numeric fallback (v0.2.2.0+) | `198303-19830806`, `19841223-19841215`, `19980620-19981204-19990504` | best-effort range from earliest+latest parseable token; handles mixed precision, transposed ranges, 3+ segments |
 | Unparseable | anything else | dateStart=null, title=directory name |
 
 Each directory may contain multiple `.mkv` titles (title00.mkv, title01.mkv) and an optional `.jpg` DVD cover. Titles < 60 seconds are auto-filtered (junk MakeMKV titles like menus). Per-title overrides allow renaming or skipping individual titles. See `docs/plan.md` for full parsing rules and override file format.
@@ -225,7 +226,7 @@ A wireframe sketch showing three states (auth dialog, timeline browser with DVD-
 3. **HTTPS/domain:** Already handled on the k8s cluster with TLS-enabled ingress. ✓ Resolved.
 4. **Storage size:** Ceph PVCs on existing cluster. Pipeline includes pre-flight disk space check. Staging requires ~2x served directory temporarily. ✓ Resolved.
 5. **Remote access mechanism:** Existing ingress controller with TLS. ✓ Resolved.
-6. **Filename format:** Real patterns discovered: `YYYYMMDD[-YYYYMMDD][-label]`, `YYYYMM[-YYYYMM][-label]`, `YYYY-label`, `label-YY-YY-YY`. Parser handles all four families + optional `-label` suffix + fallback, validates via `datetime.date` (rejects Feb 30, Jun 31, etc.), clamps years to `[1900, current_year+5]`, and rejects digit-leading labels as likely mangled dates. ✓ Resolved in eng review, expanded in v0.2.1.0.
+6. **Filename format:** Real patterns discovered: `YYYYMMDD[-YYYYMMDD][-label]`, `YYYYMM[-YYYYMM][-label]`, `YYYY-label`, `label-YY-YY-YY`, plus a multi-token numeric fallback for mixed-precision and transposed-range names. Parser handles all five families + optional `-label` suffix + fallback, validates via `datetime.date` (rejects Feb 30, Jun 31, etc.), clamps years to `[1900, current_year+5]`, and rejects digit-leading labels as likely mangled dates. ✓ Resolved in eng review, expanded in v0.2.1.0, multi-token fallback added in v0.2.2.0.
 
 ## Success Criteria
 

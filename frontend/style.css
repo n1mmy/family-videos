@@ -334,11 +334,25 @@ body {
   gap: var(--space-lg);
   padding: var(--space-xl) var(--space-lg);
   border-right: 1px solid var(--border);
+  /* Establish an inline-size containment context so .spine-year can size
+     itself off the *spine column* (fixed 280px/200px) instead of the
+     viewport. A vw-based clamp grew the year glyph as the window widened
+     while the column stayed fixed, pushing the digits past the right
+     border line. */
+  container-type: inline-size;
 }
 
 .spine-year {
   font-family: 'Instrument Serif', Georgia, serif;
-  font-size: clamp(140px, 14vw, 220px);
+  /* 60cqw = 60% of the spine column's content-box width. Sized so four
+     tabular Instrument-Serif digits sit comfortably inside the column
+     (~40px clear on each side at both desktop and tablet widths). The
+     earlier vw-based clamp grew the glyph with the viewport while the
+     spine column stayed fixed, so widening the window pushed the digits
+     past the right border line. The mobile override below uses a fixed
+     px size because the spine collapses into a horizontal banner and
+     this container rule no longer applies. */
+  font-size: 60cqw;
   font-weight: 400;
   color: var(--text);
   line-height: 0.9;

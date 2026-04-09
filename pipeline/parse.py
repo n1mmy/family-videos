@@ -62,6 +62,36 @@ def _label_from_suffix(suffix):
     return " ".join(parts)
 
 
+def _parse_date_token(tok):
+    """Parse a single '-'-separated numeric segment as a date token.
+
+    Returns a tuple ``(sort_date, display, precision)`` or ``None``:
+      - ``sort_date`` — ``datetime.date`` for comparison (first day of period)
+      - ``display``   — canonical ``YYYY`` / ``YYYY-MM`` / ``YYYY-MM-DD`` string
+      - ``precision`` — ``'year'`` / ``'month'`` / ``'day'``
+
+    Used by the multi-token fallback (Pattern 4.5) to handle DVD names
+    that mix precisions, have more than two dates, or are transposed —
+    cases the strict YYYYMMDD/YYYYMM patterns reject.
+    """
+    if re.fullmatch(r"\d{8}", tok):
+        y, mo, d = int(tok[:4]), int(tok[4:6]), int(tok[6:8])
+        if _valid_date(y, mo, d):
+            return datetime.date(y, mo, d), f"{y:04d}-{mo:02d}-{d:02d}", "day"
+        return None
+    if re.fullmatch(r"\d{6}", tok):
+        y, mo = int(tok[:4]), int(tok[4:6])
+        if _valid_year_month(y, mo):
+            return datetime.date(y, mo, 1), f"{y:04d}-{mo:02d}", "month"
+        return None
+    if re.fullmatch(r"\d{4}", tok):
+        y = int(tok)
+        if _YEAR_FLOOR <= y <= _YEAR_CEIL:
+            return datetime.date(y, 1, 1), f"{y:04d}", "year"
+        return None
+    return None
+
+
 def parse_dirname(name):
     """Parse a DVD directory name into date range, title, and years.
 
@@ -74,6 +104,12 @@ def parse_dirname(name):
     2. YYYYMM[-YYYYMM][-label]      (month range or single month)
     3. YYYY-label                   (year + descriptive label)
     4. label-YY-YY-...              (text prefix + 2-digit year suffixes)
+    4.5 Multi-token numeric fallback — purely numeric '-'-separated
+        segments where patterns 1-2 failed because of mixed precision
+        (``198303-19830806``), a transposed range (``19841223-19841215``),
+        three-or-more segments (``19980620-19981204-19990504``), or a
+        single malformed token (``19950729-19951928``). Takes the
+        earliest + latest parseable tokens as the range.
     5. Fallback (unparseable)
 
     Returns dict with keys: dateStart, dateEnd, title, years.
@@ -195,6 +231,28 @@ def parse_dirname(name):
                     "title": title,
                     "years": years,
                 }
+
+    # Pattern 4.5: Multi-token numeric fallback. All segments must be
+    # purely numeric (no text label) — non-numeric names fall through
+    # unchanged. Handles mixed precision, transposed ranges, 3+ tokens,
+    # and a single malformed token next to a valid one.
+    parts = name.split("-")
+    if len(parts) >= 2 and all(re.fullmatch(r"\d+", p) for p in parts):
+        tokens = [_parse_date_token(p) for p in parts]
+        valid = [t for t in tokens if t is not None]
+        if valid:
+            valid.sort(key=lambda t: t[0])
+            first = valid[0]
+            last = valid[-1]
+            ds = first[1]
+            de = last[1] if last is not first else None
+            years = list(range(first[0].year, last[0].year + 1))
+            return {
+                "dateStart": ds,
+                "dateEnd": de,
+                "title": None,
+                "years": years,
+            }
 
     # Pattern 5: Fallback
     return {"dateStart": None, "dateEnd": None, "title": name, "years": None}

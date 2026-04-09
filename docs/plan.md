@@ -103,6 +103,7 @@ Real filename patterns observed:
 | `YYYYMM[-label]` | `200107-hawaii-pt2` | dateStart=2001-07, title="hawaii pt2" |
 | `YYYY-label` | `1997-trip-cross-country-pt2-plusplus` | dateStart=1997, title="trip cross country pt2 plusplus" |
 | `label-YY-YY-YY` | `christmas-04-05-06` | title="christmas", years=[2004,2005,2006] |
+| Multi-token numeric fallback | `198303-19830806`, `19841223-19841215`, `19980620-19981204-19990504`, `20000708-200107` | dateStart/dateEnd from earliest+latest parseable token (handles mixed precision, transposed ranges, 3+ segments, malformed tokens) |
 | Unparseable | anything else | dateStart=null, title=filename stem |
 
 Parser logic:
@@ -110,9 +111,12 @@ Parser logic:
 2. Try `(\d{6})(?:-(\d{6}))?(?:-(.+))?` → single month or month range, optional `-label` suffix
 3. Try `(\d{4})-(.+)` → year + label
 4. Try text + short year patterns → label + years
-5. Fallback → null dates, stem as title
+5. **Multi-token numeric fallback (Pattern 4.5)** → split on `-`; if every segment is numeric, parse each as a YYYYMMDD/YYYYMM/YYYY token, drop tokens that fail validation, anchor on the earliest+latest parseable tokens. Handles mixed precision (`198303-19830806`), transposed ranges (`19841223-19841215`, normalized to min/max instead of failing), three-or-more segments (`19980620-19981204-19990504`), and a single malformed token next to a valid one (`19950729-19951928`, degrades to the valid first date).
+6. Fallback → null dates, stem as title
 
-**Validation (v0.2.1.0+):** Dates are validated via `datetime.date()` so impossible days (Feb 30, Jun 31, Feb 29 in non-leap years) are rejected rather than silently producing invalid YYYY-MM-DD strings. Years are clamped to `[1900, current_year+5]`. Date ranges with end before start fall through. Labels whose first character is a digit are rejected as likely mangled date tokens (e.g. `20010101-20020102x` — the user almost certainly meant a range, not a single day with title `20020102x`).
+**Validation (v0.2.1.0+):** Dates are validated via `datetime.date()` so impossible days (Feb 30, Jun 31, Feb 29 in non-leap years) are rejected rather than silently producing invalid YYYY-MM-DD strings. Years are clamped to `[1900, current_year+5]`. Labels whose first character is a digit are rejected as likely mangled date tokens (e.g. `20010101-20020102x` — the user almost certainly meant a range, not a single day with title `20020102x`).
+
+**Best-effort parse (v0.2.2.0+):** Pattern 4.5 reverses the previous "reject on typo" stance for purely numeric multi-segment names — transposed ranges (`19901231-19900101`) and 7-digit mangled second dates (`19881123-1989325`) used to fall through to Undated; now they degrade to a best-effort parse so the video at least anchors on the timeline. Names that mix digits and letters still follow the strict patterns.
 
 **Override file** (`overrides.json`): keyed by directory name OR `directory/titleNN` for per-title overrides. Mounted as k8s ConfigMap (not baked into image).
 ```json

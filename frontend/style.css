@@ -344,6 +344,12 @@ body {
 
 .spine-year {
   font-family: 'Instrument Serif', Georgia, serif;
+  /* Viewport-based fallback for browsers that don't support container
+     query units (pre-2022 Safari, old Firefox). These browsers drop
+     the `60cqw` declaration below and would otherwise inherit the
+     body's 18px, showing a tiny year glyph. Fallback roughly matches
+     the 60cqw output at typical desktop/tablet sizes. */
+  font-size: clamp(90px, 10vw, 140px);
   /* 60cqw = 60% of the spine column's content-box width. Sized so four
      tabular Instrument-Serif digits sit comfortably inside the column
      (~40px clear on each side at both desktop and tablet widths). The

@@ -12,6 +12,13 @@
       "runtimeExecutable": "python3",
       "runtimeArgs": ["scripts/dev_proxy.py"],
       "port": 8765
+    },
+    {
+      "name": "dev-nervous",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["scripts/dev_proxy.py"],
+      "port": 8766,
+      "env": { "DEV_PROXY_PORT": "8766" }
     }
   ]
 }

@@ -40,7 +40,7 @@ Button to play all videos from the selected year in sequence, auto-advancing whe
 ## Frontend Eng Debt
 
 ### Bootstrap a frontend test framework
-The frontend (vanilla JS/HTML/CSS) has zero automated tests. Backend `tests/` covers the transcode pipeline (70 pytest cases) but nothing exercises `frontend/app.js` — coverage audits during `/ship` are manual diagrams against live preview MCP runs. As `frontend/app.js` grows past 1100 lines with non-trivial state machines (drag cache, scroll-spy guard, deferred side effects, primary-year grouping, lightbox focus trap), the lack of automated coverage is increasingly load-bearing on manual verification.
+The frontend (vanilla JS/HTML/CSS) has zero automated tests. Backend `tests/` covers the transcode pipeline and filename parser (~100 pytest cases) but nothing exercises `frontend/app.js` — coverage audits during `/ship` are manual diagrams against live preview MCP runs. As `frontend/app.js` grows past 1100 lines with non-trivial state machines (drag cache, scroll-spy guard, deferred side effects, primary-year grouping, lightbox focus trap), the lack of automated coverage is increasingly load-bearing on manual verification.
 
 **Context:** v0.2.0.0 ship surfaced this when the coverage audit could only produce a code-path diagram + user-flow checklist instead of running tests. The right tool is probably Vitest (unit) + Playwright (e2e against the dev proxy). Vitest can exercise pure functions (`getYearRange`, `nearestContentYear`, `formatDvdTitle`, `deriveYearRangeFromVideos`) immediately without DOM, and Playwright covers the drag/scroll/lightbox flows against real `manifest.json`.
 

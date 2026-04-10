@@ -2,6 +2,12 @@
 
 All notable changes to Family Videos will be documented in this file.
 
+## [0.2.3.0] - 2026-04-09
+
+### Changed
+- **Progressive source videos no longer get softened by unnecessary deinterlacing.** The pipeline now runs an ffmpeg `idet` pre-pass on each title, sampling 400 frames to determine whether the source is actually interlaced. Only titles where interlaced fields (TFF+BFF) outnumber progressive frames get the deinterlace filter. Digital camcorder MKVs and other progressive sources skip it entirely, preserving their original sharpness. Each log line now tags the result as `(interlaced)` or `(progressive)` so you can spot-check detection.
+- **Deinterlacer upgraded from yadif to bwdif.** Same speed, sharper output on interlaced content, better handling of the field-order edge cases that show up on camcorder tapes.
+
 ## [0.2.2.0] - 2026-04-09
 
 ### Fixed

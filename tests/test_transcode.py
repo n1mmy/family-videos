@@ -11,6 +11,7 @@ from transcode import (
     check_disk_space,
     copy_cover,
     copy_served_to_staging,
+    detect_interlaced,
     extract_smart_thumbnail,
     get_duration,
     prepare_staging,
@@ -80,12 +81,141 @@ class TestTranscodeOne:
             assert args[args.index("-crf") + 1] == "23"
             assert "-vf" in args
             vf = args[args.index("-vf") + 1]
-            assert "yadif" in vf
+            # Default is_interlaced=True path: bwdif runs before scale.
+            assert "bwdif" in vf
             assert "scale=-2:480" in vf
             assert "setsar=1:1" in vf
+            assert vf.index("bwdif") < vf.index("scale=-2:480")
             assert "+faststart" in " ".join(args)
             assert "-c:a" in args
             assert "aac" in args
+
+    def test_progressive_drops_deinterlacer(self, tmp_path):
+        """is_interlaced=False must omit bwdif/yadif from the filter chain
+        entirely — running a deinterlacer on progressive content softens
+        the output unnecessarily."""
+        mkv = tmp_path / "source.mkv"
+        mp4 = tmp_path / "videos" / "output.mp4"
+        mkv.write_bytes(b"\x00" * 100)
+
+        with patch("transcode.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            transcode_one(mkv, mp4, is_interlaced=False)
+
+            args = mock_run.call_args[0][0]
+            vf = args[args.index("-vf") + 1]
+            assert "bwdif" not in vf
+            assert "yadif" not in vf
+            # Scale and SAR must still be present.
+            assert "scale=-2:480" in vf
+            assert "setsar=1:1" in vf
+
+
+# --- Interlace detection ---
+
+
+class TestDetectInterlaced:
+    def _idet_stderr(self, tff, bff, prog):
+        return (
+            f"[Parsed_idet_0 @ 0x7f] Repeated Fields: Neither:500 Top:0 Bottom:0\n"
+            f"[Parsed_idet_0 @ 0x7f] Single frame detection: "
+            f"TFF:{tff} BFF:{bff} Progressive:{prog} Undetermined:0\n"
+            f"[Parsed_idet_0 @ 0x7f] Multi frame detection: "
+            f"TFF:{tff} BFF:{bff} Progressive:{prog} Undetermined:0\n"
+        )
+
+    def test_detects_interlaced_when_tff_dominates(self, tmp_path):
+        mkv = tmp_path / "source.mkv"
+        mkv.write_bytes(b"\x00" * 100)
+        with patch("transcode.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(
+                returncode=0,
+                stderr=self._idet_stderr(tff=480, bff=2, prog=18),
+            )
+            assert detect_interlaced(mkv) is True
+            # The pre-pass must target idet with a null output sink.
+            cmd = mock_run.call_args[0][0]
+            assert cmd[0] == "ffmpeg"
+            assert "idet" in cmd
+            assert "null" in cmd
+
+    def test_detects_progressive_when_prog_dominates(self, tmp_path):
+        mkv = tmp_path / "source.mkv"
+        mkv.write_bytes(b"\x00" * 100)
+        with patch("transcode.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(
+                returncode=0,
+                stderr=self._idet_stderr(tff=3, bff=0, prog=497),
+            )
+            assert detect_interlaced(mkv) is False
+
+    def test_unparseable_output_defaults_to_interlaced(self, tmp_path):
+        """If idet's summary line is missing (e.g. ffmpeg crashed early),
+        fall back to assuming the source is interlaced — most sources in
+        this library are, and mis-deinterlacing is less destructive than
+        baking comb artifacts into the output."""
+        mkv = tmp_path / "source.mkv"
+        mkv.write_bytes(b"\x00" * 100)
+        with patch("transcode.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stderr="nothing useful here")
+            assert detect_interlaced(mkv) is True
+
+    def test_subprocess_error_defaults_to_interlaced(self, tmp_path):
+        """A FileNotFoundError (ffmpeg missing) or TimeoutExpired must
+        not propagate — return True and let the caller proceed."""
+        mkv = tmp_path / "source.mkv"
+        mkv.write_bytes(b"\x00" * 100)
+        with patch("transcode.subprocess.run", side_effect=FileNotFoundError("no ffmpeg")):
+            assert detect_interlaced(mkv) is True
+        import subprocess as _sp
+        with patch("transcode.subprocess.run", side_effect=_sp.TimeoutExpired("ffmpeg", 120)):
+            assert detect_interlaced(mkv) is True
+
+    def test_process_one_title_threads_detection_into_transcode(self, tmp_path):
+        """process_one_title must call detect_interlaced on the source and
+        forward the result to transcode_one via is_interlaced. End-to-end
+        check: progressive idet output should land as is_interlaced=False
+        in the transcode ffmpeg call (no bwdif in -vf)."""
+        mkv = tmp_path / "source.mkv"
+        mp4 = tmp_path / "videos" / "out.mp4"
+        thumb = tmp_path / "thumbs" / "out.jpg"
+        mkv.write_bytes(b"\x00" * 100)
+
+        transcode_vf = []
+        progressive_stderr = (
+            "[Parsed_idet_0 @ 0x7f] Multi frame detection: "
+            "TFF:1 BFF:0 Progressive:499 Undetermined:0\n"
+        )
+
+        def mock_run(cmd, **kwargs):
+            result = MagicMock(returncode=0, stdout=b"", stderr="")
+            if cmd[0] == "ffmpeg":
+                if "idet" in cmd:
+                    # idet pre-pass: return progressive stats.
+                    result.stderr = progressive_stderr
+                else:
+                    # Transcode call: capture the filter chain.
+                    out = Path(cmd[-1])
+                    if "-vf" in cmd:
+                        transcode_vf.append(cmd[cmd.index("-vf") + 1])
+                    if out.suffix == ".mp4":
+                        out.parent.mkdir(parents=True, exist_ok=True)
+                        out.write_bytes(b"mp4 bytes")
+                    elif out.suffix == ".jpg":
+                        out.parent.mkdir(parents=True, exist_ok=True)
+                        out.write_bytes(b"jpg bytes")
+            return result
+
+        with patch("transcode.subprocess.run", side_effect=mock_run):
+            result = process_one_title((mkv, mp4, thumb, 120.0, False))
+
+        assert result["status"] == "transcoded"
+        assert result["interlaced"] is False
+        # Only one transcode -vf was captured (the idet pre-pass is
+        # caught by the "idet in cmd" branch above, not this list).
+        assert len(transcode_vf) == 1
+        assert "bwdif" not in transcode_vf[0]
+        assert "scale=-2:480" in transcode_vf[0]
 
 
 # --- Smart thumbnail ---

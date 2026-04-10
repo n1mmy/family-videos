@@ -2,6 +2,11 @@
 
 All notable changes to Family Videos will be documented in this file.
 
+## [0.2.3.1] - 2026-04-10
+
+### Fixed
+- **Interlacing detection now works with ffmpeg 8.x.** ffmpeg 8+ emits two idet summary blocks to stderr (an initial all-zeros block, then the real cumulative counts). The regex grabbed the first empty block, causing every video to report as progressive and skip deinterlacing. Now grabs the last match, so interlaced DVD content gets properly deinterlaced again.
+
 ## [0.2.3.0] - 2026-04-09
 
 ### Changed

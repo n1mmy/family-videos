@@ -319,11 +319,16 @@ def detect_interlaced(mkv_path, sample_frames=400):
     # idet emits the summary to stderr even when ffmpeg exits non-zero
     # (e.g., on short inputs), so we ignore returncode and go straight
     # to the text.
-    match = _IDET_MULTI_FRAME_RE.search(result.stderr or "")
+    #
+    # ffmpeg >=8 prints two idet summary blocks: an initial all-zeros
+    # line when the filter graph is configured and the final cumulative
+    # counts when the graph is torn down.  We need the *last* match.
+    matches = _IDET_MULTI_FRAME_RE.findall(result.stderr or "")
+    match = matches[-1] if matches else None
     if not match:
         log.warning("idet output not recognized for %s — assuming interlaced", mkv_path.name)
         return True
-    tff, bff, prog = (int(x) for x in match.groups())
+    tff, bff, prog = (int(x) for x in match)
     log.debug("idet %s: TFF=%d BFF=%d Progressive=%d", mkv_path.name, tff, bff, prog)
     return (tff + bff) > prog
 

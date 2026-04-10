@@ -15,7 +15,7 @@ Design doc: `~/.gstack/projects/n1mmy-family-videos/nim-claude/adoring-haibt-des
 | 3 | Pipeline execution | k8s Job (matches existing iso→mkv pattern) |
 | 4 | Metadata strategy | Auto-parse filenames + `overrides.json` for manual fixes |
 | 5 | Timeline UX | Draggable scrubber + clickable year labels (dual input) |
-| 6 | Transcode strategy | Always re-encode: h264 CRF 23, 480p, yadif deinterlace, AAC 128kbps, `-movflags +faststart`, normalize SAR to 1:1 (square pixels). No remux fast-path (simplifies code, ensures iPad Safari compatibility) |
+| 6 | Transcode strategy | Always re-encode: h264 CRF 23, 480p, conditional bwdif deinterlace (via ffmpeg `idet` pre-pass on sampled frames — progressive sources skip the filter to avoid softening), AAC 128kbps, `-movflags +faststart`, normalize SAR to 1:1 (square pixels). No remux fast-path (simplifies code, ensures iPad Safari compatibility) |
 | 7 | Thumbnails | Smart frame selection (sample multiple, pick highest variance) + DVD cover JPGs shown in UI |
 | 8 | Sprites | Deferred to V2 |
 | 9 | Pipeline resilience | Idempotent (skip existing) + error-resilient (log failures, continue batch) |
@@ -177,7 +177,8 @@ Python script running as k8s Job. Reads from MKV PVC, writes to output PVC.
 4. **Load overrides.json** (mounted as ConfigMap), merge with parsed metadata. Per-title overrides (`"dvd/titleNN"`) override DVD-level metadata.
 5. **Filter titles**: skip titles marked `"skip": true` in overrides. Auto-skip titles < 60 seconds (`--min-duration` flag, default 60).
 6. **For each .mkv** in the directory (parallel via ProcessPoolExecutor, configurable workers via `WORKERS` env var, default: CPU count):
-   - **Always re-encode**: h264 CRF 23, 480p, yadif deinterlace, AAC 128kbps, `-movflags +faststart`, normalize SAR to 1:1 (square pixels)
+   - **Always re-encode**: h264 CRF 23, 480p, AAC 128kbps, `-movflags +faststart`, normalize SAR to 1:1 (square pixels)
+   - **Conditional deinterlace**: each worker runs a short ffmpeg `idet` pre-pass on sampled frames; bwdif is only added to the filter chain when interlaced fields outnumber progressive frames. Progressive sources (digital camcorder MKVs) skip deinterlacing to avoid softening
    - Skip if output .mp4 already exists and source .mkv is not newer (idempotency)
    - On ffmpeg failure → log error, continue batch
 7. **Smart thumbnail**: extract 5 frames at 10%, 25%, 40%, 60%, 80% of duration. Pick the frame with highest color variance (avoids black frames, color bars, static)

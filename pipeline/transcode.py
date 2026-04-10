@@ -311,7 +311,7 @@ def detect_interlaced(mkv_path, sample_frames=400):
             ],
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=60,
         )
     except (subprocess.TimeoutExpired, OSError) as e:
         log.warning("idet pre-pass failed for %s: %s — assuming interlaced", mkv_path.name, e)

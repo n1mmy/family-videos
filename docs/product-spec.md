@@ -176,7 +176,7 @@ Python script running as k8s Job with parallel transcoding (ProcessPoolExecutor,
 5. Symlink existing served files into staging (cheap on CephFS — unlike hardlinks, no per-link MDS bookkeeping). This preserves idempotent skips without copying any bytes.
 6. Walks directories in MKV output (one per DVD), parses dates/titles from directory names.
 7. Loads `overrides.json` (mounted as ConfigMap) for per-DVD and per-title metadata overrides. Auto-filters titles < 60 seconds.
-8. Always re-encodes to .mp4: h264 CRF 23, 480p, yadif deinterlace, AAC 128kbps, `-movflags +faststart`, normalize SAR to 1:1 (square pixels for browser compatibility). Skips if output already exists and source is not newer. Workers unlink any staging entry (breaking the symlink) before invoking ffmpeg so `-y` can't follow the link and truncate the served target.
+8. Always re-encodes to .mp4: h264 CRF 23, 480p, conditional bwdif deinterlace (workers run a short ffmpeg `idet` pre-pass on sampled frames and only add the filter when interlaced fields dominate — progressive camcorder sources skip it to avoid softening), AAC 128kbps, `-movflags +faststart`, normalize SAR to 1:1 (square pixels for browser compatibility). Skips if output already exists and source is not newer. Workers unlink any staging entry (breaking the symlink) before invoking ffmpeg so `-y` can't follow the link and truncate the served target.
 9. Smart thumbnail: samples 5 frames, picks highest color variance (avoids black frames).
 10. Copies DVD cover JPGs to `covers/` directory (also unlinks any pre-existing staging symlink before writing).
 11. Adds cache-busting query params (`?v=<hash>`) to asset URLs in manifest.

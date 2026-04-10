@@ -116,11 +116,20 @@ class TestTranscodeOne:
 
 class TestDetectInterlaced:
     def _idet_stderr(self, tff, bff, prog):
+        """Mimic ffmpeg >=8 idet output: an initial all-zeros summary when
+        the filter graph is configured, then the real cumulative summary
+        when the graph is torn down."""
         return (
-            f"[Parsed_idet_0 @ 0x7f] Repeated Fields: Neither:500 Top:0 Bottom:0\n"
+            f"[Parsed_idet_0 @ 0x7f] Repeated Fields: Neither:0 Top:0 Bottom:0\n"
             f"[Parsed_idet_0 @ 0x7f] Single frame detection: "
-            f"TFF:{tff} BFF:{bff} Progressive:{prog} Undetermined:0\n"
+            f"TFF:0 BFF:0 Progressive:0 Undetermined:0\n"
             f"[Parsed_idet_0 @ 0x7f] Multi frame detection: "
+            f"TFF:0 BFF:0 Progressive:0 Undetermined:0\n"
+            f"Stream mapping:\n"
+            f"[Parsed_idet_0 @ 0x8f] Repeated Fields: Neither:500 Top:0 Bottom:0\n"
+            f"[Parsed_idet_0 @ 0x8f] Single frame detection: "
+            f"TFF:{tff} BFF:{bff} Progressive:{prog} Undetermined:0\n"
+            f"[Parsed_idet_0 @ 0x8f] Multi frame detection: "
             f"TFF:{tff} BFF:{bff} Progressive:{prog} Undetermined:0\n"
         )
 
@@ -184,6 +193,8 @@ class TestDetectInterlaced:
         transcode_vf = []
         progressive_stderr = (
             "[Parsed_idet_0 @ 0x7f] Multi frame detection: "
+            "TFF:0 BFF:0 Progressive:0 Undetermined:0\n"
+            "[Parsed_idet_0 @ 0x8f] Multi frame detection: "
             "TFF:1 BFF:0 Progressive:499 Undetermined:0\n"
         )
 

@@ -15,6 +15,7 @@ import fcntl
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -273,15 +274,84 @@ def should_skip(mkv_path, mp4_path):
     return mp4_path.stat().st_mtime >= mkv_path.stat().st_mtime
 
 
-def transcode_one(mkv_path, mp4_path):
-    """Transcode a single MKV to MP4. Returns True on success."""
+# idet's summary line looks like:
+#   [Parsed_idet_0 @ 0x...] Multi frame detection: TFF:3 BFF:0 Progressive:497 Undetermined:0
+# Multi-frame detection correlates temporal field patterns across
+# neighbouring frames and is substantially more reliable than the
+# single-frame line, which routinely mis-flags low-motion shots.
+_IDET_MULTI_FRAME_RE = re.compile(
+    r"Multi frame detection:\s*TFF:\s*(\d+)\s*BFF:\s*(\d+)\s*Progressive:\s*(\d+)"
+)
+
+
+def detect_interlaced(mkv_path, sample_frames=400):
+    """Return True if the source appears interlaced, False if progressive.
+
+    Runs a short ffmpeg pre-pass with the `idet` filter against real
+    decoded pixels instead of trusting container `field_order` metadata
+    — DVD rips and camcorder MKVs routinely ship with the wrong (or
+    missing) interlace flag, and the on-wire fields are what the
+    deinterlacer will actually see.
+
+    On any failure (subprocess error, unrecognized output, ffmpeg not
+    installed, timeout) this defaults to True. Most of this library's
+    sources are DVD-era interlaced content, so "couldn't tell" should
+    err toward running the deinterlacer rather than baking field combs
+    into an otherwise unrecoverable output.
+    """
+    try:
+        result = subprocess.run(
+            [
+                "ffmpeg", "-hide_banner", "-nostats",
+                "-i", str(mkv_path),
+                "-vf", "idet",
+                "-frames:v", str(sample_frames),
+                "-an", "-sn",
+                "-f", "null", "-",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except (subprocess.TimeoutExpired, OSError) as e:
+        log.warning("idet pre-pass failed for %s: %s — assuming interlaced", mkv_path.name, e)
+        return True
+    # idet emits the summary to stderr even when ffmpeg exits non-zero
+    # (e.g., on short inputs), so we ignore returncode and go straight
+    # to the text.
+    match = _IDET_MULTI_FRAME_RE.search(result.stderr or "")
+    if not match:
+        log.warning("idet output not recognized for %s — assuming interlaced", mkv_path.name)
+        return True
+    tff, bff, prog = (int(x) for x in match.groups())
+    log.debug("idet %s: TFF=%d BFF=%d Progressive=%d", mkv_path.name, tff, bff, prog)
+    return (tff + bff) > prog
+
+
+def transcode_one(mkv_path, mp4_path, is_interlaced=True):
+    """Transcode a single MKV to MP4. Returns True on success.
+
+    When `is_interlaced` is True, prepends bwdif to the filter chain.
+    bwdif is a drop-in upgrade over yadif — same speed, sharper output,
+    better handling of the field-order edge cases that show up on
+    camcorder tapes. It still softens progressive content, so callers
+    should pass False when detect_interlaced has confirmed the source
+    is progressive. Defaults to True because most of this library's
+    sources are DVD-era interlaced content, so the safe fallback for
+    ad-hoc callers that skip detection is to deinterlace.
+    """
     mp4_path.parent.mkdir(parents=True, exist_ok=True)
+    vf_chain = []
+    if is_interlaced:
+        vf_chain.append("bwdif")
+    vf_chain.extend(["scale=-2:480", "setsar=1:1"])
+    vf = ",".join(vf_chain)
     try:
         result = subprocess.run(
             [
                 "ffmpeg",
                 "-i", str(mkv_path),
-                "-vf", "yadif,scale=-2:480,setsar=1:1",
+                "-vf", vf,
                 "-c:v", "libx264", "-crf", "23",
                 "-c:a", "aac", "-b:a", "128k",
                 "-movflags", "+faststart",
@@ -420,12 +490,23 @@ def process_one_title(args):
     if thumb_path.is_symlink() or thumb_path.exists():
         thumb_path.unlink()
 
-    ok = transcode_one(mkv_path, mp4_path)
+    # Decide whether to deinterlace from real sampled frames, not the
+    # container's field_order flag (which is unreliable on DVD rips).
+    # This runs in parallel with other workers since process_one_title
+    # is the unit of ProcessPoolExecutor work.
+    is_interlaced = detect_interlaced(mkv_path)
+
+    ok = transcode_one(mkv_path, mp4_path, is_interlaced=is_interlaced)
     if not ok:
         return {"status": "error", "mp4_path": mp4_path}
 
     extract_smart_thumbnail(mkv_path, thumb_path, duration)
-    return {"status": "transcoded", "mp4_path": mp4_path, "thumb_path": thumb_path}
+    return {
+        "status": "transcoded",
+        "mp4_path": mp4_path,
+        "thumb_path": thumb_path,
+        "interlaced": is_interlaced,
+    }
 
 
 # --- Manifest ---
@@ -752,7 +833,8 @@ def _run_pipeline_body(cfg, staging_base, overrides):
                         log.warning("[%d/%d] error (no result)", done, total)
                     elif result["status"] == "transcoded":
                         counters["processed"] += 1
-                        log.info("[%d/%d] transcoded %s", done, total, result["mp4_path"].name)
+                        tag = "interlaced" if result.get("interlaced") else "progressive"
+                        log.info("[%d/%d] transcoded (%s) %s", done, total, tag, result["mp4_path"].name)
                     elif result["status"] == "skipped_existing":
                         counters["skipped_existing"] += 1
                         log.info("[%d/%d] skipped (up to date) %s", done, total, result["mp4_path"].name)
